@@ -64,6 +64,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
 
         let compilerOptions = host.getCompilerOptions();
         let languageVersion = compilerOptions.target || ScriptTarget.ES3;
+        let targetHasDefaultParameters = false;
+        let targetHasSpread = false;
         let modulekind = compilerOptions.module ? compilerOptions.module : languageVersion === ScriptTarget.ES6 ? ModuleKind.ES6 : ModuleKind.None;
         let sourceMapDataList: SourceMapData[] = compilerOptions.sourceMap || compilerOptions.inlineSourceMap ? [] : undefined;
         let diagnostics: Diagnostic[] = [];
@@ -3557,7 +3559,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitParameter(node: ParameterDeclaration) {
-                if (languageVersion < ScriptTarget.ES6) {
+                if (!targetHasDefaultParameters || languageVersion < ScriptTarget.ES6) {
                     if (isBindingPattern(node.name)) {
                         let name = createTempVariable(TempFlags.Auto);
                         if (!tempParameters) {
@@ -3580,7 +3582,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitDefaultValueAssignments(node: FunctionLikeDeclaration) {
-                if (languageVersion < ScriptTarget.ES6) {
+                if (languageVersion < ScriptTarget.ES6 || !targetHasDefaultParameters) {
                     let tempIndex = 0;
                     forEach(node.parameters, parameter => {
                         // A rest parameter cannot have a binding pattern or an initializer,
@@ -3632,7 +3634,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
             }
 
             function emitRestParameter(node: FunctionLikeDeclaration) {
-                if (languageVersion < ScriptTarget.ES6 && hasRestParameter(node)) {
+                if ((languageVersion < ScriptTarget.ES6 || !targetHasSpread) && hasRestParameter(node)) {
                     let restIndex = node.parameters.length - 1;
                     let restParam = node.parameters[restIndex];
 
@@ -3779,7 +3781,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                 write("(");
                 if (node) {
                     let parameters = node.parameters;
-                    let omitCount = languageVersion < ScriptTarget.ES6 && hasRestParameter(node) ? 1 : 0;
+                    let omitCount = (languageVersion < ScriptTarget.ES6 || !targetHasSpread) && hasRestParameter(node) ? 1 : 0;
                     emitList(parameters, 0, parameters.length - omitCount, /*multiLine*/ false, /*trailingComma*/ false);
                 }
                 write(")");
@@ -3899,12 +3901,18 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                     write(", Promise");
                 }
 
+                write(", function* ");
+
+                if (shouldEmitFunctionName(node)) {
+                    emitDeclarationName(node);
+                }
+
                 // Emit the call to __awaiter.
                 if (hasLexicalArguments) {
-                    write(", function* (_arguments)");
+                    write("(_arguments)");
                 }
                 else {
-                    write(", function* ()");
+                    write("()");
                 }
 
                 // Emit the signature and body for the inner generator function.
@@ -4347,7 +4355,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                         //          Let constructor be the result of parsing the String "constructor(... args){ super (...args);}" using the syntactic grammar with the goal symbol MethodDefinition.
                         //      Else,
                         //          Let constructor be the result of parsing the String "constructor( ){ }" using the syntactic grammar with the goal symbol MethodDefinition
-                        if (baseTypeElement) {
+                        if (targetHasSpread && baseTypeElement) {
                             write("(...args)");
                         }
                         else {
@@ -4389,7 +4397,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, Promi
                             write("_super.apply(this, arguments);");
                         }
                         else {
-                            write("super(...args);");
+                            if (targetHasSpread)
+                                write("super(...args);");
+                            else
+                                write("super();");
                         }
                         emitEnd(baseTypeElement);
                     }
