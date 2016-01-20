@@ -1,5 +1,6 @@
 /// <reference path="program.ts"/>
 /// <reference path="commandLineParser.ts"/>
+/// <reference path="../mbit/emitter.ts"/>
 
 namespace ts {
     export interface SourceFile {
@@ -591,6 +592,14 @@ namespace ts {
             }
 
             reportDiagnostics(diagnostics, compilerHost);
+
+            if (compilerOptions.mbit) {
+                const mbitOutput = emitMBit(program);
+                reportDiagnostics(mbitOutput.diagnostics, compilerHost);
+                return diagnostics.length || mbitOutput.diagnostics 
+                    ? ExitStatus.DiagnosticsPresent_OutputsSkipped
+                    : ExitStatus.Success;
+            }            
 
             // If the user doesn't want us to emit, then we're done at this point.
             if (compilerOptions.noEmit) {

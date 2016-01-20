@@ -12,6 +12,7 @@ var servicesDirectory = "src/services/";
 var serverDirectory = "src/server/";
 var harnessDirectory = "src/harness/";
 var libraryDirectory = "src/lib/";
+var mbitDirectory = "src/mbit/";
 var scriptsDirectory = "scripts/";
 var unittestsDirectory = "tests/cases/unittests/";
 var docDirectory = "doc/";
@@ -49,6 +50,12 @@ var compilerSources = [
     "diagnosticInformationMap.generated.ts"
 ].map(function (f) {
     return path.join(compilerDirectory, f);
+});
+
+var mbitSources = [
+    "emitter.ts",
+].map(function (f) {
+    return path.join(mbitDirectory, f);
 });
 
 var servicesSources = [
@@ -433,7 +440,7 @@ task("importDefinitelyTypedTests", [importDefinitelyTypedTestsJs], function () {
 
 // Local target to build the compiler and services
 var tscFile = path.join(builtLocalDirectory, compilerFilename);
-compileFile(tscFile, compilerSources, [builtLocalDirectory, copyright].concat(compilerSources), [copyright], /*useBuiltCompiler:*/ false);
+compileFile(tscFile, compilerSources, [builtLocalDirectory, copyright].concat(compilerSources).concat(mbitSources), [copyright], /*useBuiltCompiler:*/ false);
 
 var servicesFile = path.join(builtLocalDirectory, "typescriptServices.js");
 var standaloneDefinitionsFile = path.join(builtLocalDirectory, "typescriptServices.d.ts");
