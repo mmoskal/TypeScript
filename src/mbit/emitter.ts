@@ -60,8 +60,7 @@ namespace ts {
         }
 
         function unhandled(n: Node) {
-            inspect(n)
-            userError(lf("unhandled"))
+            userError(lf("Unsupported syntax node: {0}", (<any>ts).SyntaxKind[n.kind]));
         }
 
         function scope(f: () => void) {
@@ -167,6 +166,23 @@ namespace ts {
             })
             return res
         }
+        function isRefType(t: Type) {
+            return !(t.flags & (TypeFlags.Number | TypeFlags.Boolean | TypeFlags.Enum))
+        }
+        function isRefExpr(e: Expression) {
+            let tp = checker.getTypeAtLocation(e)
+            return isRefType(tp)
+        }
+        function getMask(args: NodeArray<Expression>) {
+            Debug.assert(args.length <= 8)
+            var m = 0
+            args.forEach((a, i) => {
+                if (isRefExpr(a))
+                    m |= (1 << i)
+            })
+            return m
+        }
+
         function emitCallExpression(node: CallExpression) {
             node.arguments.forEach(emit)
 
@@ -175,8 +191,7 @@ namespace ts {
 
             if (decl && decl.kind == SyntaxKind.FunctionDeclaration) {
                 if (attrs.shim) {
-                    // TODO mask
-                    proc.emitCall(attrs.shim, 0);
+                    proc.emitCall(attrs.shim, getMask(node.arguments));
                     return;
                 }
             }
@@ -248,13 +263,13 @@ namespace ts {
             let isGlobal = node.parent == currentSourceFile;
             if (node.flags & NodeFlags.Ambient)
                 return;
-            inspect(node);
+            unhandled(node);
         }
         function emitExpressionStatement(node: ExpressionStatement) {
             emit(node.expression);
             let a = checker.getTypeAtLocation(node.expression)
             if (!(a.flags & TypeFlags.Void))
-                proc.emit("pop {r0}") 
+                proc.emit("pop {r0}")
             proc.stackEmpty();
         }
         function emitIfStatement(node: IfStatement) { }
@@ -283,7 +298,7 @@ namespace ts {
         function emitModuleDeclaration(node: ModuleDeclaration) {
             if (node.flags & NodeFlags.Ambient)
                 return;
-            inspect(node);
+            unhandled(node);
         }
         function emitImportDeclaration(node: ImportDeclaration) { }
         function emitImportEqualsDeclaration(node: ImportEqualsDeclaration) { }
@@ -351,7 +366,7 @@ namespace ts {
                     return emitPropertyAccess(<PropertyAccessExpression>node);
 
                 default:
-                    error(node, "Unsupported syntax node: {0}", (<any>ts).SyntaxKind[node.kind]);
+                    unhandled(node);
 
                 /*    
                 case SyntaxKind.Identifier:
