@@ -820,6 +820,9 @@ module ts.thumb {
                     if (lnop == "bb" && lb11.encode(ln.numArgs[0]) != null) {
                         // RULE: bb .somewhere -> b .somewhere (if fits)
                         ln.update("b " + ln.words[1])
+                    } else if (lnop == "b" && ln.numArgs[0] == -2) {
+                        // RULE: b .somewhere; .somewhere: -> .somewhere:
+                        ln.update("")
                     } else if (lnop == "bne" && isSkipBranch && lb.encode(lnNext.numArgs[0]) != null) {
                         // RULE: bne .next; b .somewhere; .next: -> beq .somewhere
                         ln.update("beq " + lnNext.words[1])
