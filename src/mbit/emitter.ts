@@ -283,15 +283,10 @@ namespace ts {
             let isGlobal = node.parent == currentSourceFile;
             if (node.flags & NodeFlags.Ambient)
                 return;
-            isLet
             node.declarationList.declarations.forEach(emit);
         }
         function emitExpressionStatement(node: ExpressionStatement) {
-            emit(node.expression);
-            let a = checker.getTypeAtLocation(node.expression)
-            if (!(a.flags & TypeFlags.Void))
-                proc.emit("pop {r0}")
-            proc.stackEmpty();
+            emitExprAsStmt(node.expression)
         }
         function emitIfStatement(node: IfStatement) {
             emit(node.expression)
@@ -305,16 +300,103 @@ namespace ts {
                 emit(node.elseStatement)
             proc.emitLbl(afterAll)
         }
-        function emitDoStatement(node: DoStatement) { }
-        function emitWhileStatement(node: WhileStatement) { }
-        function emitForStatement(node: ForStatement) { }
+        
+        function getLabels(stmt:Statement)
+        {
+            let id = getNodeId(stmt)
+            return {
+                fortop: ".fortop." + id,
+                cont: ".cont." + id,
+                brk: ".brk." + id
+            }
+        }
+
+        function emitDoStatement(node: DoStatement) {
+            let l = getLabels(node)
+            proc.emitLbl(l.cont);
+            emit(node.statement)
+            emit(node.expression)
+            proc.emitJmp(l.brk, "JMPZ");
+            proc.emitJmp(l.cont);
+            proc.emitLbl(l.brk);
+        }
+
+        function emitWhileStatement(node: WhileStatement) {
+            let l = getLabels(node)
+            proc.emitLbl(l.cont);
+            emit(node.expression)
+            proc.emitJmp(l.brk, "JMPZ");
+            emit(node.statement)
+            proc.emitJmp(l.cont);
+            proc.emitLbl(l.brk);
+        }
+
+        function emitExprAsStmt(node: Expression) {
+            if (!node) return;
+            emit(node);
+            let a = checker.getTypeAtLocation(node)
+            if (!(a.flags & TypeFlags.Void))
+                proc.emit("pop {r0}")
+            proc.stackEmpty();
+        }
+
+        function emitForStatement(node: ForStatement) {
+            if (node.initializer && node.initializer.kind == SyntaxKind.VariableDeclarationList)
+                (<VariableDeclarationList>node.initializer).declarations.forEach(emit);
+            else
+                emitExprAsStmt(<Expression>node.initializer);
+            let l = getLabels(node)
+            proc.emitLbl(l.fortop);
+            if (node.condition) {
+                emit(node.condition);
+                proc.emitJmp(l.brk, "JMPZ");
+            }
+            emit(node.statement)
+            proc.emitLbl(l.cont);
+            emitExprAsStmt(node.incrementor);
+            proc.emitJmp(l.fortop);
+            proc.emitLbl(l.brk);
+        }
+
         function emitForInOrForOfStatement(node: ForInStatement) { }
-        function emitBreakOrContinueStatement(node: BreakOrContinueStatement) { }
+
+        function emitBreakOrContinueStatement(node: BreakOrContinueStatement) {
+            let label = node.label ? node.label.text : null
+            function findOuter(node: Node): Statement {
+                if (!node) return null;
+                if (label && node.kind == SyntaxKind.LabeledStatement &&
+                    (<LabeledStatement>node).label.text == label)
+                    return (<LabeledStatement>node).statement;
+                if (!label && isIterationStatement(node, false))
+                    return <Statement>node;
+                findOuter(node.parent);
+            }
+            let stmt = findOuter(node)
+            if (!stmt)
+                error(node, lf("cannot find outer loop"))
+            else {
+                let l = getLabels(stmt)
+                if (node.kind == SyntaxKind.ContinueStatement) {
+                    if (!isIterationStatement(stmt, false))
+                        error(node, lf("continue on non-loop"));
+                    else proc.emitJmp(l.cont)
+                } else if (node.kind == SyntaxKind.BreakStatement) {
+                    proc.emitJmp(l.brk)
+                } else {
+                    Debug.fail();
+                }
+            }
+        }
+
         function emitReturnStatement(node: ReturnStatement) { }
         function emitWithStatement(node: WithStatement) { }
         function emitSwitchStatement(node: SwitchStatement) { }
         function emitCaseOrDefaultClause(node: CaseOrDefaultClause) { }
-        function emitLabeledStatement(node: LabeledStatement) { }
+        function emitLabeledStatement(node: LabeledStatement) {
+            let l = getLabels(node.statement)
+            emit(node.statement)
+            proc.emitLbl(l.brk)
+        }
         function emitThrowStatement(node: ThrowStatement) { }
         function emitTryStatement(node: TryStatement) { }
         function emitCatchClause(node: CatchClause) { }
@@ -408,6 +490,18 @@ namespace ts {
                     return emitIdentifier(<Identifier>node);
                 case SyntaxKind.IfStatement:
                     return emitIfStatement(<IfStatement>node);
+                case SyntaxKind.WhileStatement:
+                    return emitWhileStatement(<WhileStatement>node);
+                case SyntaxKind.DoStatement:
+                    return emitDoStatement(<DoStatement>node);
+                case SyntaxKind.ForStatement:
+                    return emitForStatement(<ForStatement>node);
+                case SyntaxKind.ContinueStatement:
+                case SyntaxKind.BreakStatement:
+                    return emitBreakOrContinueStatement(<BreakOrContinueStatement>node);
+                case SyntaxKind.LabeledStatement:
+                    return emitLabeledStatement(<LabeledStatement>node);
+
                 default:
                     unhandled(node);
 
@@ -490,18 +584,9 @@ namespace ts {
                     return;
                 case SyntaxKind.EmptyStatement:
                     return;
-                case SyntaxKind.DoStatement:
-                    return emitDoStatement(<DoStatement>node);
-                case SyntaxKind.WhileStatement:
-                    return emitWhileStatement(<WhileStatement>node);
-                case SyntaxKind.ForStatement:
-                    return emitForStatement(<ForStatement>node);
                 case SyntaxKind.ForOfStatement:
                 case SyntaxKind.ForInStatement:
                     return emitForInOrForOfStatement(<ForInStatement>node);
-                case SyntaxKind.ContinueStatement:
-                case SyntaxKind.BreakStatement:
-                    return emitBreakOrContinueStatement(<BreakOrContinueStatement>node);
                 case SyntaxKind.ReturnStatement:
                     return emitReturnStatement(<ReturnStatement>node);
                 case SyntaxKind.WithStatement:
@@ -511,8 +596,6 @@ namespace ts {
                 case SyntaxKind.CaseClause:
                 case SyntaxKind.DefaultClause:
                     return emitCaseOrDefaultClause(<CaseOrDefaultClause>node);
-                case SyntaxKind.LabeledStatement:
-                    return emitLabeledStatement(<LabeledStatement>node);
                 case SyntaxKind.ThrowStatement:
                     return emitThrowStatement(<ThrowStatement>node);
                 case SyntaxKind.TryStatement:
