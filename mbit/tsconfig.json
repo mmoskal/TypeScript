@@ -6,7 +6,7 @@
         "rootDir": ".",
         "newLine": "LF",
         "module": "commonjs",
-        "mbit": true,
+        //"mbit": true,
         "sourceMap": true
     }
 }

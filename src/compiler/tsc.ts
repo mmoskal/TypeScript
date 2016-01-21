@@ -596,7 +596,7 @@ namespace ts {
             if (compilerOptions.mbit) {
                 const mbitOutput = emitMBit(program);
                 reportDiagnostics(mbitOutput.diagnostics, compilerHost);
-                return diagnostics.length || mbitOutput.diagnostics 
+                return diagnostics.length || mbitOutput.diagnostics.length
                     ? ExitStatus.DiagnosticsPresent_OutputsSkipped
                     : ExitStatus.Success;
             }            
