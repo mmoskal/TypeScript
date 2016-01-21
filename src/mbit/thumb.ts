@@ -1,7 +1,7 @@
 /// <reference path="../compiler/tsc.ts"/>
 
 
-namespace mbit {
+module ts.thumb {
     /* Docs:
      *
      * Thumb 16-bit Instruction Set Quick Reference Card
@@ -193,7 +193,7 @@ namespace mbit {
         public instruction: Instruction;
         public numArgs: number[];
 
-        constructor(public bin: ThumbBinary, public text: string) {
+        constructor(public bin: File, public text: string) {
         }
 
         public getOpExt() {
@@ -252,7 +252,7 @@ namespace mbit {
         }
     }
 
-    export class ThumbBinary {
+    export class File {
         constructor() {
             this.currLine = new Line(this, "<start>");
             this.currLine.lineNo = 0;
@@ -1170,14 +1170,14 @@ namespace mbit {
     }
 
     function testOne(op: string, code: number) {
-        var b = new ThumbBinary()
+        var b = new File()
         b.checkStack = false;
         b.emit(op)
         ts.Debug.assert(b.buf[0] == code)
     }
 
     function expectError(asm: string) {
-        var b = new ThumbBinary();
+        var b = new File();
         b.emit(asm);
         if (b.errors.length == 0) {
             ts.Debug.fail("ASMTEST: expecting error for: " + asm)
@@ -1199,7 +1199,7 @@ namespace mbit {
             return ""
         })
 
-        var b = new ThumbBinary();
+        var b = new File();
         b.throwOnError = true;
         b.disablePeepHole = true;
         b.emit(asm);
@@ -1216,7 +1216,7 @@ namespace mbit {
         }
     }
 
-    export function testThumb() {
+    export function test() {
         expectError("lsl r0, r0, #8");
         expectError("push {pc,lr}");
         expectError("push {r17}");
