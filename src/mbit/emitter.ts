@@ -14,13 +14,21 @@ namespace ts {
         return !(t.flags & (TypeFlags.Number | TypeFlags.Boolean | TypeFlags.Enum))
     }
 
+    function isGlobalVar(d: Declaration) {
+        return d.kind == SyntaxKind.VariableDeclaration && d.parent.parent.kind == SyntaxKind.SourceFile;
+    }
+
+    function isLocalVar(d: Declaration) {
+        return d.kind == SyntaxKind.VariableDeclaration && !isGlobalVar(d);
+    }
+
     interface CommentAttrs {
         shim?: string;
         enumval?: string;
     }
 
     let lf = thumb.lf;
-    let checker:TypeChecker;
+    let checker: TypeChecker;
 
 
     export function emitMBit(program: Program): EmitResult {
@@ -93,7 +101,16 @@ namespace ts {
             fs.writeFileSync("microbit.hex", hex)
         }
 
-        function emitIdentifier(node: Identifier) { }
+        function emitIdentifier(node: Identifier) {
+            let decl = getDecl(node)
+            if (decl && decl.kind == SyntaxKind.VariableDeclaration) {
+                let l = proc.localIndex(decl)
+                l.emitLoad(proc);
+            } else {
+                unhandled(node)
+            }
+        }
+
         function emitParameter(node: ParameterDeclaration) { }
         function emitMethod(node: MethodDeclaration) { }
         function emitAccessor(node: AccessorDeclaration) { }
@@ -266,7 +283,8 @@ namespace ts {
             let isGlobal = node.parent == currentSourceFile;
             if (node.flags & NodeFlags.Ambient)
                 return;
-            unhandled(node);
+            isLet
+            node.declarationList.declarations.forEach(emit);
         }
         function emitExpressionStatement(node: ExpressionStatement) {
             emit(node.expression);
@@ -275,7 +293,18 @@ namespace ts {
                 proc.emit("pop {r0}")
             proc.stackEmpty();
         }
-        function emitIfStatement(node: IfStatement) { }
+        function emitIfStatement(node: IfStatement) {
+            emit(node.expression)
+            let elseLbl = proc.mkLabel("else")
+            proc.emitJmp(elseLbl, "JMPZ")
+            emit(node.thenStatement)
+            let afterAll = proc.mkLabel("afterif")
+            proc.emitJmp(afterAll)
+            proc.emitLbl(elseLbl)
+            if (node.elseStatement)
+                emit(node.elseStatement)
+            proc.emitLbl(afterAll)
+        }
         function emitDoStatement(node: DoStatement) { }
         function emitWhileStatement(node: WhileStatement) { }
         function emitForStatement(node: ForStatement) { }
@@ -290,7 +319,13 @@ namespace ts {
         function emitTryStatement(node: TryStatement) { }
         function emitCatchClause(node: CatchClause) { }
         function emitDebuggerStatement(node: Node) { }
-        function emitVariableDeclaration(node: VariableDeclaration) { }
+        function emitVariableDeclaration(node: VariableDeclaration) {
+            let loc = proc.mkLocal(node)
+            if (node.initializer) {
+                emit(node.initializer)
+                loc.emitStore(proc)
+            }
+        }
         function emitClassExpression(node: ClassExpression) { }
         function emitClassDeclaration(node: ClassDeclaration) { }
         function emitInterfaceDeclaration(node: InterfaceDeclaration) {
@@ -367,13 +402,16 @@ namespace ts {
                     return emitLiteral(<LiteralExpression>node);
                 case SyntaxKind.PropertyAccessExpression:
                     return emitPropertyAccess(<PropertyAccessExpression>node);
-
+                case SyntaxKind.VariableDeclaration:
+                    return emitVariableDeclaration(<VariableDeclaration>node);
+                case SyntaxKind.Identifier:
+                    return emitIdentifier(<Identifier>node);
+                case SyntaxKind.IfStatement:
+                    return emitIfStatement(<IfStatement>node);
                 default:
                     unhandled(node);
 
                 /*    
-                case SyntaxKind.Identifier:
-                    return emitIdentifier(<Identifier>node);
                 case SyntaxKind.Parameter:
                     return emitParameter(<ParameterDeclaration>node);
                 case SyntaxKind.MethodDeclaration:
@@ -452,8 +490,6 @@ namespace ts {
                     return;
                 case SyntaxKind.EmptyStatement:
                     return;
-                case SyntaxKind.IfStatement:
-                    return emitIfStatement(<IfStatement>node);
                 case SyntaxKind.DoStatement:
                     return emitDoStatement(<DoStatement>node);
                 case SyntaxKind.WhileStatement:
@@ -485,8 +521,6 @@ namespace ts {
                     return emitCatchClause(<CatchClause>node);
                 case SyntaxKind.DebuggerStatement:
                     return emitDebuggerStatement(node);
-                case SyntaxKind.VariableDeclaration:
-                    return emitVariableDeclaration(<VariableDeclaration>node);
                 case SyntaxKind.ClassExpression:
                     return emitClassExpression(<ClassExpression>node);
                 case SyntaxKind.ClassDeclaration:
@@ -654,21 +688,22 @@ namespace ts {
             return null
         }
 
-        function isRefDecl(def: Declaration) {  
-            let tp = checker.getDeclaredTypeOfSymbol(def.symbol)
-            return isRefType(tp)          
+        function isRefDecl(def: Declaration) {
+            //let tp = checker.getDeclaredTypeOfSymbol(def.symbol)
+            let tp = checker.getTypeAtLocation(def)
+            return isRefType(tp)
         }
 
 
         export class Location {
             isarg = false;
 
-            constructor(public index: number, public def: DeclarationStatement = null) {
+            constructor(public index: number, public def: Declaration = null) {
             }
 
             toString() {
                 var n = ""
-                if (this.def) n += this.def.name.text
+                if (this.def) n += (<any>this.def.name).text || "?"
                 if (this.isarg) n = "ARG " + n
                 if (this.isRef()) n = "REF " + n
                 if (this.isByRefLocal()) n = "BYREF " + n
@@ -680,7 +715,11 @@ namespace ts {
             }
 
             isGlobal() {
-                return false // TODO
+                return isGlobalVar(this.def)
+            }
+
+            isLocal() {
+                return isLocalVar(this.def)
             }
 
             refSuff() {
@@ -695,7 +734,7 @@ namespace ts {
             }
 
             emitStoreByRef(proc: Procedure) {
-                //Debug.assert(this.def instanceof LocalDef) TODO
+                Debug.assert(this.isLocal())
 
                 if (this.isByRefLocal()) {
                     this.emitLoadLocal(proc);
@@ -806,11 +845,16 @@ namespace ts {
                 return text || "inline"
             }
 
-            mkLocal(def: DeclarationStatement = null) {
+            mkLocal(def: Declaration = null) {
                 var l = new Location(this.locals.length, def)
                 //if (def) console.log("LOCAL: " + def.getName() + ": ref=" + def.isByRef() + " cap=" + def._isCaptured + " mut=" + def._isMutable)
                 this.locals.push(l)
                 return l
+            }
+
+            localIndex(l: Declaration, noargs = false): Location {
+                return this.locals.filter(n => n.def == l)[0] ||
+                    (noargs ? null : this.args.filter(n => n.def == l)[0])
             }
 
             emitClrs(omit: Declaration, inclArgs = false) {

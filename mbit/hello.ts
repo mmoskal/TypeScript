@@ -1,6 +1,6 @@
 function main()
 {
-    let x = 12;
-    basic.buttonIsPressed(Button.A)
-    basic.showString("hello world", 150)
+    let x = Button.B;
+    if (basic.buttonIsPressed(x))
+        basic.showString("B+", 150)
 }
