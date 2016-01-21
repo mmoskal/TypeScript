@@ -36,4 +36,23 @@ declare module basic {
      * {shim:micro_bit::scrollNumber}
      */
     export function showNumber(value: number, interval: number): void;
+
+    /**
+     * Get the button state (pressed or not) for ``A`` and ``B``.
+     * {help:functions/button-is-pressed}
+     * {namespace:input}
+     * {weight:59}
+     * {enum:name:A=MICROBIT_ID_BUTTON_A,B=MICROBIT_ID_BUTTON_B}
+     * {shim:micro_bit::isButtonPressed}
+     */
+    export function buttonIsPressed(button: Button): boolean
+}
+
+declare enum Button {
+    // {enumval:MICROBIT_ID_BUTTON_A}
+    A,
+    // {enumval:MICROBIT_ID_BUTTON_A}
+    B,
+    // {enumval:MICROBIT_ID_BUTTON_AB}
+    AB,
 }

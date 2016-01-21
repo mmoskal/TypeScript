@@ -10,6 +10,11 @@ namespace ts {
         console.log(k)
     }
 
+    interface CommentAttrs {
+        shim?: string;
+        enumval?: string;
+    }
+
     export function emitMBit(program: Program): EmitResult {
 
         const diagnostics = createDiagnosticCollection();
@@ -28,6 +33,8 @@ namespace ts {
         let currBreakLabel = "";
         let currContinueLabel = "";
 
+        let lf = mbit.lf;
+
         program.getSourceFiles().forEach(emit);
         finalEmit();
 
@@ -44,6 +51,17 @@ namespace ts {
                 key: msg.replace(/^[a-zA-Z]+/g, "_"),
                 category: DiagnosticCategory.Error,
             }, arg0, arg1, arg2));
+        }
+
+        function userError(msg: string) {
+            var e = new Error(msg);
+            (<any>e).bitvmUserError = true;
+            throw e;
+        }
+
+        function unhandled(n: Node) {
+            inspect(n)
+            userError(lf("unhandled"))
         }
 
         function scope(f: () => void) {
@@ -107,24 +125,58 @@ namespace ts {
         function emitPropertyAssignment(node: PropertyDeclaration) { }
         function emitShorthandPropertyAssignment(node: ShorthandPropertyAssignment) { }
         function emitComputedPropertyName(node: ComputedPropertyName) { }
-        function emitPropertyAccess(node: PropertyAccessExpression) { }
+        function emitPropertyAccess(node: PropertyAccessExpression) {
+            let decl = getDecl(node);
+            let attrs = parseComments(decl);
+            if (decl.kind == SyntaxKind.EnumMember) {
+                let ev = attrs.enumval
+                if (!ev)
+                    userError(lf("{enumval:...} missing"))
+                var inf = mbit.lookupFunc(ev)
+                if (!inf)
+                    userError(lf("unhandled enum value: {0}", ev))
+                if (inf.type == "E")
+                    proc.emitInt(inf.value)
+                else if (inf.type == "F" && inf.args == 0)
+                    proc.emitCall(ev, 0)
+                else
+                    userError(lf("not valid enum: {0}; is it procedure name?", ev))
+            } else {
+                unhandled(node);
+            }
+        }
         function emitIndexedAccess(node: ElementAccessExpression) { }
+        function getDecl(node: Node): Declaration {
+            if (!node) return null
+            let sym = checker.getSymbolAtLocation(node)
+            return sym ? sym.valueDeclaration : null
+        }
+        function getComments(node: Node) {
+            let src = getSourceFileOfNode(node)
+            let doc = getLeadingCommentRangesOfNodeFromText(node, src.text)
+            let cmt = doc.map(r => src.text.slice(r.pos, r.end)).join("\n")
+            return cmt;
+        }
+        function parseComments(node: Node): CommentAttrs {
+            if (!node) return {}
+            let cmt = getComments(node)
+            let res = {}
+            cmt.replace(/\{(\w+):([^{}]+)\}/g, (f: string, n: string, v: string) => {
+                (<any>res)[n] = v;
+                return ""
+            })
+            return res
+        }
         function emitCallExpression(node: CallExpression) {
             node.arguments.forEach(emit)
 
-            let sym = checker.getSymbolAtLocation(node.expression)
-            let decl = sym ? sym.valueDeclaration : null
+            let decl = getDecl(node.expression)
+            let attrs = parseComments(decl)
+
             if (decl && decl.kind == SyntaxKind.FunctionDeclaration) {
-                let fundecl = <FunctionDeclaration>decl;
-                let src = getSourceFileOfNode(fundecl)
-                let doc = getLeadingCommentRangesOfNodeFromText(fundecl, src.text)
-                let cmt = doc.map(r => src.text.slice(r.pos, r.end)).join("\n")
-                let m = /\{shim:([^{}\n]+)\}/.exec(cmt)
-                console.log(cmt)
-                if (m) {
-                    let shim = m[1]
+                if (attrs.shim) {
                     // TODO mask
-                    proc.emitCall(shim, 0)
+                    proc.emitCall(attrs.shim, 0);
                     return;
                 }
             }
@@ -164,12 +216,12 @@ namespace ts {
                 /*
                 var retl = a.getOutParameters()[0]
 
-                this.proc.emitClrs(retl ? retl.local : null, true);
+                proc.emitClrs(retl ? retl.local : null, true);
 
                 if (retl) {
-                    var li = this.localIndex(retl.local);
+                    var li = localIndex(retl.local);
                     Util.assert(!li.isByRefLocal())
-                    li.emitLoadCore(this.proc)
+                    li.emitLoadCore(proc)
                 }
                 */
 
@@ -200,7 +252,10 @@ namespace ts {
         }
         function emitExpressionStatement(node: ExpressionStatement) {
             emit(node.expression);
-            // TODO pop if needed
+            let a = checker.getTypeAtLocation(node.expression)
+            if (!(a.flags & TypeFlags.Void))
+                proc.emit("pop {r0}") 
+            proc.stackEmpty();
         }
         function emitIfStatement(node: IfStatement) { }
         function emitDoStatement(node: DoStatement) { }
@@ -244,7 +299,15 @@ namespace ts {
         }
 
         function emit(node: Node) {
-            emitNodeCore(node);
+            try {
+                emitNodeCore(node);
+            } catch (e) {
+                if (e.bitvmUserError) {
+                    error(node, e.message)
+                } else {
+                    throw e;
+                }
+            }
         }
 
         function emitNodeCore(node: Node) {
@@ -263,6 +326,8 @@ namespace ts {
                     return emitVariableStatement(<VariableStatement>node);
                 case SyntaxKind.ModuleDeclaration:
                     return emitModuleDeclaration(<ModuleDeclaration>node);
+                case SyntaxKind.EnumDeclaration:
+                    return emitEnumDeclaration(<EnumDeclaration>node);
                 case SyntaxKind.FunctionDeclaration:
                 case SyntaxKind.FunctionExpression:
                 case SyntaxKind.ArrowFunction:
@@ -282,6 +347,8 @@ namespace ts {
                     //case SyntaxKind.TemplateMiddle:
                     //case SyntaxKind.TemplateTail:
                     return emitLiteral(<LiteralExpression>node);
+                case SyntaxKind.PropertyAccessExpression:
+                    return emitPropertyAccess(<PropertyAccessExpression>node);
 
                 default:
                     error(node, "Unsupported syntax node: {0}", (<any>ts).SyntaxKind[node.kind]);
@@ -331,8 +398,6 @@ namespace ts {
                     return emitShorthandPropertyAssignment(<ShorthandPropertyAssignment>node);
                 case SyntaxKind.ComputedPropertyName:
                     return emitComputedPropertyName(<ComputedPropertyName>node);
-                case SyntaxKind.PropertyAccessExpression:
-                    return emitPropertyAccess(<PropertyAccessExpression>node);
                 case SyntaxKind.ElementAccessExpression:
                     return emitIndexedAccess(<ElementAccessExpression>node);
                 case SyntaxKind.NewExpression:
@@ -408,8 +473,6 @@ namespace ts {
                     return emitClassExpression(<ClassExpression>node);
                 case SyntaxKind.ClassDeclaration:
                     return emitClassDeclaration(<ClassDeclaration>node);
-                case SyntaxKind.EnumDeclaration:
-                    return emitEnumDeclaration(<EnumDeclaration>node);
                 case SyntaxKind.EnumMember:
                     return emitEnumMember(<EnumMember>node);
                 case SyntaxKind.ImportDeclaration:
@@ -458,11 +521,6 @@ namespace mbit {
         return r
     }
 
-    function userError(msg: string) {
-        var e = new Error(msg);
-        (<any>e).bitvmUserError = true;
-        throw e;
-    }
 
     export function isSetupFor(extInfo: ExtensionInfo) {
         return currentSetup == extInfo.sha
@@ -564,7 +622,7 @@ namespace mbit {
         ts.Debug.fail();
     }
 
-    function lookupFunc(name: string) {
+    export function lookupFunc(name: string) {
         if (/^uBit\./.test(name))
             name = name.replace(/^uBit\./, "micro_bit::").replace(/\.(.)/g, (x, y) => y.toUpperCase())
         return funcInfo[name]
