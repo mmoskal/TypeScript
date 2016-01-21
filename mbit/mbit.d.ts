@@ -48,6 +48,19 @@ declare module basic {
     export function buttonIsPressed(button: Button): boolean
 }
 
+interface Action {
+    ():void;
+}
+
+declare module control {
+    /**
+     * Schedules code that run in the background.
+     * {help:functions/in-background}
+     * {shim:micro_bit::runInBackground}
+     */
+    export function inBackground(body: Action): void;
+}
+
 declare enum Button {
     // {enumval:MICROBIT_ID_BUTTON_A}
     A,

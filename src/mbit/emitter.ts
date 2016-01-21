@@ -170,6 +170,7 @@ namespace ts {
         function getComments(node: Node) {
             let src = getSourceFileOfNode(node)
             let doc = getLeadingCommentRangesOfNodeFromText(node, src.text)
+            if (!doc) return "";
             let cmt = doc.map(r => src.text.slice(r.pos, r.end)).join("\n")
             return cmt;
         }
@@ -967,7 +968,9 @@ namespace ts {
             args: Location[] = [];
 
             hasReturn() {
-                return !(this.action.type.flags & TypeFlags.Void)
+                let sig = checker.getSignatureFromDeclaration(this.action)
+                let rettp = checker.getReturnTypeOfSignature(sig)
+                return !(rettp.flags & TypeFlags.Void)
             }
 
             toString() {
