@@ -46,8 +46,6 @@ namespace ts {
         bin.addProc(proc);
 
         let currentSourceFile: SourceFile = null;
-        let currBreakLabel = "";
-        let currContinueLabel = "";
 
         program.getSourceFiles().forEach(emit);
         finalEmit();
@@ -79,14 +77,10 @@ namespace ts {
 
         function scope(f: () => void) {
             let prevProc = proc;
-            let prevBreakLabel = currBreakLabel;
-            let prevContinueLabel = currContinueLabel;
             try {
                 f();
             } finally {
                 proc = prevProc;
-                currBreakLabel = prevBreakLabel;
-                currContinueLabel = prevContinueLabel;
             }
         }
 
@@ -204,18 +198,61 @@ namespace ts {
         }
 
         function emitCallExpression(node: CallExpression) {
-            node.arguments.forEach(emit)
-
             let decl = getDecl(node.expression)
             let attrs = parseComments(decl)
+            let hasRet = !(checker.getTypeAtLocation(node).flags & TypeFlags.Void)
+            let args = node.arguments
 
             if (decl && decl.kind == SyntaxKind.FunctionDeclaration) {
                 if (attrs.shim) {
-                    proc.emitCall(attrs.shim, getMask(node.arguments));
+                    let nm = attrs.shim
+
+                    if (nm == "TD_NOOP") {
+                        Debug.assert(!hasRet)
+                        return
+                    }
+
+                    if (nm == "TD_ID") {
+                        Debug.assert(args.length == 1)
+                        emit(args[0])
+                        return
+                    }
+
+                    let inf = mbit.lookupFunc(attrs.shim)
+                    if (inf) {
+                        if (!hasRet) {
+                            if (inf.type != "P")
+                                userError("expecting procedure for " + nm);
+                        } else {
+                            if (inf.type != "F")
+                                userError("expecting function for " + nm);
+                        }
+                        if (args.length != inf.args)
+                            userError("argument number mismatch: " + args.length + " vs " + inf.args)
+                    } else {
+                        userError("function not found: " + nm)
+                    }
+
+                    args.forEach(emit)
+                    proc.emitCall(attrs.shim, getMask(args));
                     return;
                 }
+
+                proc.emit("bl " + getFunctionLabel(<FunctionLikeDeclaration>decl))
+                if (args.length > 0)
+                    proc.emit("add sp, #4*" + args.length)
+                if (hasRet)
+                    proc.emit("push {r0}");
+                return
             }
-            emit(node.expression);
+            
+            unhandled(node)
+        }
+        
+        function getFunctionLabel(node: FunctionLikeDeclaration) {
+            let text = node ? (<Identifier>node.name).text : null
+            text = text || "inline"
+            return "_" + text.replace(/[^\w]+/g, "_") + "_" + getNodeId(node)
         }
         function emitNewExpression(node: NewExpression) { }
         function emitTaggedTemplateExpression(node: TaggedTemplateExpression) { }
@@ -232,33 +269,30 @@ namespace ts {
                 bin.addProc(proc);
 
                 proc.emit(".section code");
-                proc.emitLbl(proc.label);
+                proc.emitLbl(getFunctionLabel(node));
                 proc.emit("@stackmark func");
                 proc.emit("@stackmark args");
                 proc.emit("push {lr}");
                 proc.pushLocals();
 
-                let ret = proc.mkLabel("actret")
-                currBreakLabel = ret;
+                proc.args = node.parameters.map((p, i) => {
+                    let l = new mbit.Location(i, p)
+                    l.isarg = true
+                    return l
+                })
 
                 emit(node.body);
 
-                proc.emitLbl(ret)
+                proc.emitLbl(getLabels(node).ret)
                 proc.stackEmpty();
 
-                proc.emitClrs(null, true);
-
-                /*
-                var retl = a.getOutParameters()[0]
-
-                proc.emitClrs(retl ? retl.local : null, true);
-
-                if (retl) {
-                    var li = localIndex(retl.local);
-                    Util.assert(!li.isByRefLocal())
-                    li.emitLoadCore(proc)
+                if (proc.hasReturn()) {
+                    proc.emit("push {r0}");
+                    proc.emitClrs(null, true);
+                    proc.emit("pop {r0}");
+                } else {
+                    proc.emitClrs(null, true);
                 }
-                */
 
                 proc.popLocals();
                 proc.emit("pop {pc}");
@@ -300,14 +334,14 @@ namespace ts {
                 emit(node.elseStatement)
             proc.emitLbl(afterAll)
         }
-        
-        function getLabels(stmt:Statement)
-        {
+
+        function getLabels(stmt: Node) {
             let id = getNodeId(stmt)
             return {
                 fortop: ".fortop." + id,
                 cont: ".cont." + id,
-                brk: ".brk." + id
+                brk: ".brk." + id,
+                ret: ".ret." + id
             }
         }
 
@@ -335,8 +369,14 @@ namespace ts {
             if (!node) return;
             emit(node);
             let a = checker.getTypeAtLocation(node)
-            if (!(a.flags & TypeFlags.Void))
-                proc.emit("pop {r0}")
+            if (!(a.flags & TypeFlags.Void)) {
+                if (isRefType(a)) {
+                    // will pop
+                    proc.emitCall("bitvm::decr", 0);
+                } else {
+                    proc.emit("pop {r0}")
+                }
+            }
             proc.stackEmpty();
         }
 
@@ -388,7 +428,16 @@ namespace ts {
             }
         }
 
-        function emitReturnStatement(node: ReturnStatement) { }
+        function emitReturnStatement(node: ReturnStatement) {
+            if (node.expression) {
+                emit(node.expression)
+                proc.emit("pop {r0}")
+            } else if (proc.hasReturn()) {
+                proc.emit("mov r0, #0 ; return undefined")
+            }
+            proc.emitJmp(getLabels(proc.action).ret)
+        }
+
         function emitWithStatement(node: WithStatement) { }
         function emitSwitchStatement(node: SwitchStatement) { }
         function emitCaseOrDefaultClause(node: CaseOrDefaultClause) { }
@@ -501,6 +550,8 @@ namespace ts {
                     return emitBreakOrContinueStatement(<BreakOrContinueStatement>node);
                 case SyntaxKind.LabeledStatement:
                     return emitLabeledStatement(<LabeledStatement>node);
+                case SyntaxKind.ReturnStatement:
+                    return emitReturnStatement(<ReturnStatement>node);
 
                 default:
                     unhandled(node);
@@ -587,8 +638,6 @@ namespace ts {
                 case SyntaxKind.ForOfStatement:
                 case SyntaxKind.ForInStatement:
                     return emitForInOrForOfStatement(<ForInStatement>node);
-                case SyntaxKind.ReturnStatement:
-                    return emitReturnStatement(<ReturnStatement>node);
                 case SyntaxKind.WithStatement:
                     return emitWithStatement(<WithStatement>node);
                 case SyntaxKind.SwitchStatement:
@@ -907,17 +956,19 @@ namespace ts {
 
         export class Procedure {
             numArgs = 0;
-            hasReturn = false;
             action: FunctionLikeDeclaration;
             argsInR5 = false;
             seqNo: number;
             lblNo = 0;
-            label: string;
 
             prebody = "";
             body = "";
             locals: Location[] = [];
             args: Location[] = [];
+
+            hasReturn() {
+                return !(this.action.type.flags & TypeFlags.Void)
+            }
 
             toString() {
                 return this.prebody + this.body
@@ -1199,7 +1250,6 @@ namespace ts {
             addProc(proc: Procedure) {
                 this.procs.push(proc)
                 proc.seqNo = this.procs.length
-                proc.label = "_" + proc.getName() + "_" + proc.seqNo
             }
 
 
