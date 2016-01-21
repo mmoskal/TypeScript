@@ -1,6 +1,4 @@
-function foo()
+function main()
 {
     basic.showString("hello world", 150)
 }
-
-foo()

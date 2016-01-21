@@ -44,3 +44,5 @@ internal/
 .settings
 .vscode/*
 !.vscode/tasks.json
+mbit/microbit.asm
+mbit/microbit.hex

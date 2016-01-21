@@ -3,6 +3,8 @@
 
 /* @internal */
 namespace ts {
+    declare var require: any;
+
     export function inspect(n: Node) {
         var k = (<any>ts).SyntaxKind[n.kind]
         console.log(k)
@@ -11,9 +13,23 @@ namespace ts {
     export function emitMBit(program: Program): EmitResult {
 
         const diagnostics = createDiagnosticCollection();
+        const checker = program.getTypeChecker();
 
+        mbit.staticBytecodeInfo = require("./hexinfo.js");
+        mbit.setup();
 
-        program.getSourceFiles().forEach(emitNode);
+        const fs = require("fs");
+        const bin = new mbit.Binary();
+
+        let proc: mbit.Procedure = new mbit.Procedure();
+        bin.addProc(proc);
+
+        let currentSourceFile: SourceFile = null;
+        let currBreakLabel = "";
+        let currContinueLabel = "";
+
+        program.getSourceFiles().forEach(emit);
+        finalEmit();
 
         return {
             diagnostics: diagnostics.getDiagnostics(),
@@ -30,13 +46,52 @@ namespace ts {
             }, arg0, arg1, arg2));
         }
 
+        function scope(f: () => void) {
+            let prevProc = proc;
+            let prevBreakLabel = currBreakLabel;
+            let prevContinueLabel = currContinueLabel;
+            try {
+                f();
+            } finally {
+                proc = prevProc;
+                currBreakLabel = prevBreakLabel;
+                currContinueLabel = prevContinueLabel;
+            }
+        }
+
+        function finalEmit() {
+            if (diagnostics.getModificationCount())
+                return;
+            bin.serialize();
+            bin.patchSrcHash();
+            bin.assemble();
+            const hex = bin.patchHex(false).join("\r\n") + "\r\n"
+            fs.writeFileSync("microbit.asm", bin.csource)
+            fs.writeFileSync("microbit.hex", hex)
+        }
+
         function emitIdentifier(node: Identifier) { }
         function emitParameter(node: ParameterDeclaration) { }
         function emitMethod(node: MethodDeclaration) { }
         function emitAccessor(node: AccessorDeclaration) { }
         function emitThis(node: Node) { }
         function emitSuper(node: Node) { }
-        function emitLiteral(node: LiteralExpression) { }
+        function emitLiteral(node: LiteralExpression) {
+            if (node.kind == SyntaxKind.NumericLiteral) {
+                proc.emitInt(parseInt(node.text))
+            } else if (node.kind == SyntaxKind.StringLiteral) {
+                if (node.text == "") {
+                    proc.emitCall("string::mkEmpty", 0)
+                } else {
+                    let lbl = bin.emitString(node.text)
+                    proc.emitLdPtr(lbl + "meta", false);
+                    proc.emitCallRaw("bitvm::stringData")
+                    proc.emit("push {r0}");
+                }
+            } else {
+                Debug.fail();
+            }
+        }
         function emitTemplateExpression(node: TemplateExpression) { }
         function emitTemplateSpan(node: TemplateSpan) { }
         function emitJsxElement(node: JsxElement) { }
@@ -54,13 +109,76 @@ namespace ts {
         function emitComputedPropertyName(node: ComputedPropertyName) { }
         function emitPropertyAccess(node: PropertyAccessExpression) { }
         function emitIndexedAccess(node: ElementAccessExpression) { }
-        function emitCallExpression(node: CallExpression) { }
+        function emitCallExpression(node: CallExpression) {
+            node.arguments.forEach(emit)
+
+            let sym = checker.getSymbolAtLocation(node.expression)
+            let decl = sym ? sym.valueDeclaration : null
+            if (decl && decl.kind == SyntaxKind.FunctionDeclaration) {
+                let fundecl = <FunctionDeclaration>decl;
+                let src = getSourceFileOfNode(fundecl)
+                let doc = getLeadingCommentRangesOfNodeFromText(fundecl, src.text)
+                let cmt = doc.map(r => src.text.slice(r.pos, r.end)).join("\n")
+                let m = /\{shim:([^{}\n]+)\}/.exec(cmt)
+                console.log(cmt)
+                if (m) {
+                    let shim = m[1]
+                    // TODO mask
+                    proc.emitCall(shim, 0)
+                    return;
+                }
+            }
+            emit(node.expression);
+        }
         function emitNewExpression(node: NewExpression) { }
         function emitTaggedTemplateExpression(node: TaggedTemplateExpression) { }
         function emitTypeAssertion(node: TypeAssertion) { }
         function emitAsExpression(node: AsExpression) { }
         function emitParenExpression(node: ParenthesizedExpression) { }
-        function emitFunctionDeclaration(node: FunctionLikeDeclaration) { }
+        function emitFunctionDeclaration(node: FunctionLikeDeclaration) {
+            if (node.flags & NodeFlags.Ambient)
+                return;
+
+            scope(() => {
+                proc = new mbit.Procedure();
+                proc.action = node;
+                bin.addProc(proc);
+
+                proc.emit(".section code");
+                proc.emitLbl(proc.label);
+                proc.emit("@stackmark func");
+                proc.emit("@stackmark args");
+                proc.emit("push {lr}");
+                proc.pushLocals();
+
+                let ret = proc.mkLabel("actret")
+                currBreakLabel = ret;
+
+                emit(node.body);
+
+                proc.emitLbl(ret)
+                proc.stackEmpty();
+
+                proc.emitClrs(null, true);
+
+                /*
+                var retl = a.getOutParameters()[0]
+
+                this.proc.emitClrs(retl ? retl.local : null, true);
+
+                if (retl) {
+                    var li = this.localIndex(retl.local);
+                    Util.assert(!li.isByRefLocal())
+                    li.emitLoadCore(this.proc)
+                }
+                */
+
+                proc.popLocals();
+                proc.emit("pop {pc}");
+                proc.emit("@stackempty func");
+            })
+        }
+
         function emitDeleteExpression(node: DeleteExpression) { }
         function emitTypeOfExpression(node: TypeOfExpression) { }
         function emitVoidExpression(node: VoidExpression) { }
@@ -71,9 +189,19 @@ namespace ts {
         function emitConditionalExpression(node: ConditionalExpression) { }
         function emitSpreadElementExpression(node: SpreadElementExpression) { }
         function emitYieldExpression(node: YieldExpression) { }
-        function emitBlock(node: Block) { }
-        function emitVariableStatement(node: VariableStatement) { }
-        function emitExpressionStatement(node: ExpressionStatement) { }
+        function emitBlock(node: Block) {
+            node.statements.forEach(emit)
+        }
+        function emitVariableStatement(node: VariableStatement) {
+            let isGlobal = node.parent == currentSourceFile;
+            if (node.flags & NodeFlags.Ambient)
+                return;
+            inspect(node);
+        }
+        function emitExpressionStatement(node: ExpressionStatement) {
+            emit(node.expression);
+            // TODO pop if needed
+        }
         function emitIfStatement(node: IfStatement) { }
         function emitDoStatement(node: DoStatement) { }
         function emitWhileStatement(node: WhileStatement) { }
@@ -92,38 +220,68 @@ namespace ts {
         function emitVariableDeclaration(node: VariableDeclaration) { }
         function emitClassExpression(node: ClassExpression) { }
         function emitClassDeclaration(node: ClassDeclaration) { }
-        function emitInterfaceDeclaration(node: InterfaceDeclaration) { }
+        function emitInterfaceDeclaration(node: InterfaceDeclaration) {
+            // TODO?
+        }
         function emitEnumDeclaration(node: EnumDeclaration) { }
         function emitEnumMember(node: EnumMember) { }
-        function emitModuleDeclaration(node: ModuleDeclaration) { }
+        function emitModuleDeclaration(node: ModuleDeclaration) {
+            if (node.flags & NodeFlags.Ambient)
+                return;
+            inspect(node);
+        }
         function emitImportDeclaration(node: ImportDeclaration) { }
         function emitImportEqualsDeclaration(node: ImportEqualsDeclaration) { }
         function emitExportDeclaration(node: ExportDeclaration) { }
         function emitExportAssignment(node: ExportAssignment) { }
-        function emitSourceFileNode(node: SourceFile) { 
-            node.statements.forEach(emitNode)
+        function emitSourceFileNode(node: SourceFile) {
+            currentSourceFile = node;
+            node.statements.forEach(emit)
         }
 
         function emitIntLiteral(n: number) {
-
+            proc.emitInt(n)
         }
 
-        function emitNode(node: Node) {
+        function emit(node: Node) {
             emitNodeCore(node);
         }
 
         function emitNodeCore(node: Node) {
-            // Check if the node can be emitted regardless of the ScriptTarget
             switch (node.kind) {
                 case SyntaxKind.SourceFile:
                     return emitSourceFileNode(<SourceFile>node);
-
                 case SyntaxKind.NullKeyword:
                     return emitIntLiteral(0);
                 case SyntaxKind.TrueKeyword:
                     return emitIntLiteral(1);
                 case SyntaxKind.FalseKeyword:
                     return emitIntLiteral(0);
+                case SyntaxKind.InterfaceDeclaration:
+                    return emitInterfaceDeclaration(<InterfaceDeclaration>node);
+                case SyntaxKind.VariableStatement:
+                    return emitVariableStatement(<VariableStatement>node);
+                case SyntaxKind.ModuleDeclaration:
+                    return emitModuleDeclaration(<ModuleDeclaration>node);
+                case SyntaxKind.FunctionDeclaration:
+                case SyntaxKind.FunctionExpression:
+                case SyntaxKind.ArrowFunction:
+                    return emitFunctionDeclaration(<FunctionLikeDeclaration>node);
+                case SyntaxKind.ExpressionStatement:
+                    return emitExpressionStatement(<ExpressionStatement>node);
+                case SyntaxKind.CallExpression:
+                    return emitCallExpression(<CallExpression>node);
+                case SyntaxKind.Block:
+                case SyntaxKind.ModuleBlock:
+                    return emitBlock(<Block>node);
+                case SyntaxKind.NumericLiteral:
+                case SyntaxKind.StringLiteral:
+                    //case SyntaxKind.RegularExpressionLiteral:
+                    //case SyntaxKind.NoSubstitutionTemplateLiteral:
+                    //case SyntaxKind.TemplateHead:
+                    //case SyntaxKind.TemplateMiddle:
+                    //case SyntaxKind.TemplateTail:
+                    return emitLiteral(<LiteralExpression>node);
 
                 default:
                     error(node, "Unsupported syntax node: {0}", (<any>ts).SyntaxKind[node.kind]);
@@ -143,14 +301,6 @@ namespace ts {
                     return emitThis(node);
                 case SyntaxKind.SuperKeyword:
                     return emitSuper(node);
-                case SyntaxKind.NumericLiteral:
-                case SyntaxKind.StringLiteral:
-                case SyntaxKind.RegularExpressionLiteral:
-                case SyntaxKind.NoSubstitutionTemplateLiteral:
-                case SyntaxKind.TemplateHead:
-                case SyntaxKind.TemplateMiddle:
-                case SyntaxKind.TemplateTail:
-                    return emitLiteral(<LiteralExpression>node);
                 case SyntaxKind.TemplateExpression:
                     return emitTemplateExpression(<TemplateExpression>node);
                 case SyntaxKind.TemplateSpan:
@@ -185,8 +335,6 @@ namespace ts {
                     return emitPropertyAccess(<PropertyAccessExpression>node);
                 case SyntaxKind.ElementAccessExpression:
                     return emitIndexedAccess(<ElementAccessExpression>node);
-                case SyntaxKind.CallExpression:
-                    return emitCallExpression(<CallExpression>node);
                 case SyntaxKind.NewExpression:
                     return emitNewExpression(<NewExpression>node);
                 case SyntaxKind.TaggedTemplateExpression:
@@ -197,10 +345,6 @@ namespace ts {
                     return emitAsExpression(<AsExpression>node);
                 case SyntaxKind.ParenthesizedExpression:
                     return emitParenExpression(<ParenthesizedExpression>node);
-                case SyntaxKind.FunctionDeclaration:
-                case SyntaxKind.FunctionExpression:
-                case SyntaxKind.ArrowFunction:
-                    return emitFunctionDeclaration(<FunctionLikeDeclaration>node);
                 case SyntaxKind.DeleteExpression:
                     return emitDeleteExpression(<DeleteExpression>node);
                 case SyntaxKind.TypeOfExpression:
@@ -223,15 +367,8 @@ namespace ts {
                     return emitYieldExpression(<YieldExpression>node);
                 case SyntaxKind.OmittedExpression:
                     return;
-                case SyntaxKind.Block:
-                case SyntaxKind.ModuleBlock:
-                    return emitBlock(<Block>node);
-                case SyntaxKind.VariableStatement:
-                    return emitVariableStatement(<VariableStatement>node);
                 case SyntaxKind.EmptyStatement:
                     return;
-                case SyntaxKind.ExpressionStatement:
-                    return emitExpressionStatement(<ExpressionStatement>node);
                 case SyntaxKind.IfStatement:
                     return emitIfStatement(<IfStatement>node);
                 case SyntaxKind.DoStatement:
@@ -271,14 +408,10 @@ namespace ts {
                     return emitClassExpression(<ClassExpression>node);
                 case SyntaxKind.ClassDeclaration:
                     return emitClassDeclaration(<ClassDeclaration>node);
-                case SyntaxKind.InterfaceDeclaration:
-                    return emitInterfaceDeclaration(<InterfaceDeclaration>node);
                 case SyntaxKind.EnumDeclaration:
                     return emitEnumDeclaration(<EnumDeclaration>node);
                 case SyntaxKind.EnumMember:
                     return emitEnumMember(<EnumMember>node);
-                case SyntaxKind.ModuleDeclaration:
-                    return emitModuleDeclaration(<ModuleDeclaration>node);
                 case SyntaxKind.ImportDeclaration:
                     return emitImportDeclaration(<ImportDeclaration>node);
                 case SyntaxKind.ImportEqualsDeclaration:
@@ -292,9 +425,8 @@ namespace ts {
         }
     }
 }
-    
-namespace mbit
-{
+
+namespace mbit {
     export interface FuncInfo {
         name: string;
         type: string;
@@ -302,25 +434,23 @@ namespace mbit
         value: number;
     }
 
-    export interface ExtensionInfo
-    {
-        enums:StringMap<number>;
-        functions:FuncInfo[];
-        errors:string;
-        sha:string;
-        compileData:string;
-        hasExtension:boolean;
+    export interface ExtensionInfo {
+        enums: StringMap<number>;
+        functions: FuncInfo[];
+        errors: string;
+        sha: string;
+        compileData: string;
+        hasExtension: boolean;
     }
 
-    var funcInfo:StringMap<FuncInfo>;
-    var hex:string[];
-    var jmpStartAddr:number;
-    var jmpStartIdx:number;
-    var bytecodeStartAddr:number;
-    var bytecodeStartIdx:number;
+    var funcInfo: StringMap<FuncInfo>;
+    var hex: string[];
+    var jmpStartAddr: number;
+    var jmpStartIdx: number;
+    var bytecodeStartAddr: number;
+    var bytecodeStartIdx: number;
 
-    function swapBytes(str:string)
-    {
+    function swapBytes(str: string) {
         var r = ""
         for (var i = 0; i < str.length; i += 2)
             r = str[i] + str[i + 1] + r
@@ -328,20 +458,17 @@ namespace mbit
         return r
     }
 
-    function userError(msg:string)
-    {
+    function userError(msg: string) {
         var e = new Error(msg);
         (<any>e).bitvmUserError = true;
         throw e;
     }
 
-    export function isSetupFor(extInfo:ExtensionInfo)
-    {
+    export function isSetupFor(extInfo: ExtensionInfo) {
         return currentSetup == extInfo.sha
     }
 
-    function parseHexBytes(bytes:string):number[]
-    {
+    function parseHexBytes(bytes: string): number[] {
         bytes = bytes.replace(/^[\s:]/, "")
         if (!bytes) return []
         var m = /^([a-f0-9][a-f0-9])/i.exec(bytes)
@@ -351,15 +478,15 @@ namespace mbit
             ts.Debug.fail("bad bytes " + bytes)
     }
 
-    var currentSetup:string = null;
-    export function setupFor(extInfo:ExtensionInfo, bytecodeInfo:any)
-    {
+    var currentSetup: string = null;
+    export var staticBytecodeInfo: any;
+    export function setupFor(extInfo: ExtensionInfo, bytecodeInfo: any) {
         if (isSetupFor(extInfo))
             return;
 
         currentSetup = extInfo.sha;
 
-        var jsinf = bytecodeInfo
+        var jsinf = bytecodeInfo || staticBytecodeInfo
         hex = jsinf.hex;
 
         var i = 0;
@@ -403,9 +530,9 @@ namespace mbit
             ts.Debug.fail("No hex start")
 
         funcInfo = {};
-        var funs:FuncInfo[] = jsinf.functions.concat(extInfo.functions);
+        var funs: FuncInfo[] = jsinf.functions.concat(extInfo.functions);
 
-        var addEnum = (enums:any) =>
+        var addEnum = (enums: any) =>
             Object.keys(enums).forEach(k => {
                 funcInfo[k] = {
                     name: k,
@@ -433,41 +560,35 @@ namespace mbit
                 s = s.slice(8)
             }
         }
-        
+
         ts.Debug.fail();
     }
 
-    function lookupFunc(name:string)
-    {
+    function lookupFunc(name: string) {
         if (/^uBit\./.test(name))
             name = name.replace(/^uBit\./, "micro_bit::").replace(/\.(.)/g, (x, y) => y.toUpperCase())
         return funcInfo[name]
     }
 
-    export function lookupFunctionAddr(name:string)
-    {
+    export function lookupFunctionAddr(name: string) {
         var inf = lookupFunc(name)
         if (inf)
             return inf.value - bytecodeStartAddr
         return null
     }
 
-    function isRefKind(def:ts.Declaration)
-    {
+    function isRefKind(def: ts.Declaration) {
         return false // TODO
     }
 
 
-    export class Location
-    {
+    export class Location {
         isarg = false;
 
-        constructor(public index:number, public def:ts.DeclarationStatement = null)
-        {
+        constructor(public index: number, public def: ts.DeclarationStatement = null) {
         }
 
-        toString()
-        {
+        toString() {
             var n = ""
             if (this.def) n += this.def.name.text
             if (this.isarg) n = "ARG " + n
@@ -476,31 +597,26 @@ namespace mbit
             return "[" + n + "]"
         }
 
-        isRef()
-        {
+        isRef() {
             return this.def && isRefKind(this.def)
         }
-        
-        isGlobal()
-        {
+
+        isGlobal() {
             return false // TODO
         }
 
-        refSuff()
-        {
+        refSuff() {
             if (this.isRef()) return "Ref"
             else return ""
         }
-        
 
-        isByRefLocal()
-        {
+
+        isByRefLocal() {
             //return this.def instanceof LocalDef && (<LocalDef>this.def).isByRef()
             return false //TODO
         }
 
-        emitStoreByRef(proc:Procedure)
-        {
+        emitStoreByRef(proc: Procedure) {
             //ts.Debug.assert(this.def instanceof LocalDef) TODO
 
             if (this.isByRefLocal()) {
@@ -512,8 +628,7 @@ namespace mbit
             }
         }
 
-        asmref(proc:Procedure)
-        {
+        asmref(proc: Procedure) {
             if (this.isarg) {
                 var idx = proc.args.length - this.index - 1
                 return "[sp, args@" + idx + "] ; " + this.toString()
@@ -523,13 +638,11 @@ namespace mbit
             }
         }
 
-        emitStoreCore(proc:Procedure)
-        {
+        emitStoreCore(proc: Procedure) {
             proc.emit("str r0, " + this.asmref(proc))
         }
 
-        emitStore(proc:Procedure)
-        {
+        emitStore(proc: Procedure) {
             if (this.isarg)
                 ts.Debug.fail("store for arg")
 
@@ -547,13 +660,11 @@ namespace mbit
             }
         }
 
-        emitLoadCore(proc:Procedure)
-        {
+        emitLoadCore(proc: Procedure) {
             proc.emit("ldr r0, " + this.asmref(proc))
         }
 
-        emitLoadByRef(proc:Procedure)
-        {
+        emitLoadByRef(proc: Procedure) {
             if (this.isByRefLocal()) {
                 this.emitLoadLocal(proc);
                 proc.emitCallRaw("bitvm::ldloc" + this.refSuff())
@@ -561,8 +672,7 @@ namespace mbit
             } else this.emitLoad(proc);
         }
 
-        emitLoadLocal(proc:Procedure)
-        {
+        emitLoadLocal(proc: Procedure) {
             if (this.isarg && proc.argsInR5) {
                 ts.Debug.assert(0 <= this.index && this.index < 32)
                 proc.emit("ldr r0, [r5, #4*" + this.index + "]")
@@ -571,8 +681,7 @@ namespace mbit
             }
         }
 
-        emitLoad(proc:Procedure, direct = false)
-        {
+        emitLoad(proc: Procedure, direct = false) {
             if (this.isGlobal()) {
                 proc.emitInt(this.index)
                 proc.emitCall("bitvm::ldglb" + this.refSuff(), 0); // unref internal
@@ -586,8 +695,7 @@ namespace mbit
             }
         }
 
-        emitClrIfRef(proc:Procedure)
-        {
+        emitClrIfRef(proc: Procedure) {
             // ts.Debug.assert(!this.isarg)
             ts.Debug.assert(!this.isGlobal())
             if (this.isRef() || this.isByRefLocal()) {
@@ -597,36 +705,37 @@ namespace mbit
         }
     }
 
-    export class Procedure
-    {
+    export class Procedure {
         numArgs = 0;
         hasReturn = false;
-        action:ts.FunctionDeclaration;
+        action: ts.FunctionLikeDeclaration;
         argsInR5 = false;
-        seqNo:number;
+        seqNo: number;
         lblNo = 0;
-        label:string;
+        label: string;
 
         prebody = "";
         body = "";
-        locals:Location[] = [];
-        args:Location[] = [];
+        locals: Location[] = [];
+        args: Location[] = [];
 
-        toString()
-        {
+        toString() {
             return this.prebody + this.body
         }
 
-        mkLocal(def:ts.DeclarationStatement = null)
-        {
+        getName() {
+            let text = this.action ? (<ts.Identifier>this.action.name).text : null
+            return text || "inline"
+        }
+
+        mkLocal(def: ts.DeclarationStatement = null) {
             var l = new Location(this.locals.length, def)
             //if (def) console.log("LOCAL: " + def.getName() + ": ref=" + def.isByRef() + " cap=" + def._isCaptured + " mut=" + def._isMutable)
             this.locals.push(l)
             return l
         }
 
-        emitClrs(omit:ts.Declaration, inclArgs = false)
-        {
+        emitClrs(omit: ts.Declaration, inclArgs = false) {
             var lst = this.locals
             if (inclArgs)
                 lst = lst.concat(this.args)
@@ -636,13 +745,11 @@ namespace mbit
             })
         }
 
-        emitCallRaw(name:string)
-        {
+        emitCallRaw(name: string) {
             this.emit("bl " + name + " ; (raw)")
         }
 
-        emitCall(name:string, mask:number)
-        {
+        emitCall(name: string, mask: number) {
             var inf = lookupFunc(name)
             ts.Debug.assert(!!inf, "unimplemented function: " + name)
 
@@ -657,7 +764,7 @@ namespace mbit
             if (inf.args >= 1)
                 this.emit("pop {r0}");
 
-            var reglist:string[] = []
+            var reglist: string[] = []
 
             for (var i = 0; i < 4; ++i) {
                 if (mask & (1 << i))
@@ -696,8 +803,7 @@ namespace mbit
             }
         }
 
-        emitJmp(trg:string, name = "JMP")
-        {
+        emitJmp(trg: string, name = "JMP") {
             var lbl = ""
             if (name == "JMPZ") {
                 lbl = this.mkLabel("jmpz")
@@ -720,35 +826,29 @@ namespace mbit
                 this.emitLbl(lbl)
         }
 
-        mkLabel(root:string):string
-        {
+        mkLabel(root: string): string {
             return "." + root + "." + this.seqNo + "." + this.lblNo++;
         }
 
-        emitLbl(lbl:string)
-        {
+        emitLbl(lbl: string) {
             this.emit(lbl + ":")
         }
 
-        emit(name:string)
-        {
+        emit(name: string) {
             this.body += asmline(name)
         }
 
-        emitMov(v:number)
-        {
+        emitMov(v: number) {
             ts.Debug.assert(0 <= v && v <= 255)
             this.emit("movs r0, #" + v)
         }
 
-        emitAdd(v:number)
-        {
+        emitAdd(v: number) {
             ts.Debug.assert(0 <= v && v <= 255)
             this.emit("adds r0, #" + v)
         }
 
-        emitLdPtr(lbl:string, push = false)
-        {
+        emitLdPtr(lbl: string, push = false) {
             ts.Debug.assert(!!lbl)
             this.emit("movs r0, " + lbl + "@hi   ; ldptr " + lbl)
             this.emit("lsls r0, r0, #8")
@@ -757,8 +857,7 @@ namespace mbit
                 this.emit("push {r0}")
         }
 
-        emitInt(v:number, keepInR0 = false)
-        {
+        emitInt(v: number, keepInR0 = false) {
             ts.Debug.assert(v != null);
 
             var n = Math.floor(v)
@@ -791,20 +890,17 @@ namespace mbit
                 this.emit("push {r0}")
         }
 
-        stackEmpty()
-        {
+        stackEmpty() {
             this.emit("@stackempty locals");
         }
 
-        pushLocals()
-        {
+        pushLocals() {
             ts.Debug.assert(this.prebody == "")
             this.prebody = this.body
             this.body = ""
         }
 
-        popLocals()
-        {
+        popLocals() {
             var suff = this.body
             this.body = this.prebody
 
@@ -823,7 +919,7 @@ namespace mbit
         }
     }
 
-    function hexBytes(bytes:number[]) {
+    function hexBytes(bytes: number[]) {
         var chk = 0
         var r = ":"
         bytes.forEach(b => chk += b)
@@ -832,36 +928,32 @@ namespace mbit
         return r.toUpperCase();
     }
 
-    export class Binary
-    {
-        procs:Procedure[] = [];
-        globals:Location[] = [];
-        buf:number[];
+    export class Binary {
+        procs: Procedure[] = [];
+        globals: Location[] = [];
+        buf: number[];
         csource = "";
 
-        strings:StringMap<string> = {};
+        strings: StringMap<string> = {};
         stringsBody = "";
         lblNo = 0;
 
-        isDataRecord(s:string)
-        {
+        isDataRecord(s: string) {
             if (!s) return false
             var m = /^:......(..)/.exec(s)
             ts.Debug.assert(!!m)
             return m[1] == "00"
         }
 
-        patchHex(shortForm:boolean)
-        {
+        patchHex(shortForm: boolean) {
             var myhex = hex.slice(0, bytecodeStartIdx)
 
             ts.Debug.assert(this.buf.length < 32000)
 
             var ptr = 0
 
-            function nextLine(buf:number[], addr:number)
-            {
-                var bytes = [0x10, (addr>>8)&0xff, addr&0xff, 0]
+            function nextLine(buf: number[], addr: number) {
+                var bytes = [0x10, (addr >> 8) & 0xff, addr & 0xff, 0]
                 for (var j = 0; j < 8; ++j) {
                     bytes.push((buf[ptr] || 0) & 0xff)
                     bytes.push((buf[ptr] || 0) >>> 8)
@@ -895,20 +987,18 @@ namespace mbit
 
             if (!shortForm)
                 hex.slice(bytecodeStartIdx).forEach(l => myhex.push(l))
-            
+
             return myhex;
         }
 
-        addProc(proc:Procedure)
-        {
+        addProc(proc: Procedure) {
             this.procs.push(proc)
             proc.seqNo = this.procs.length
-            proc.label = "_" + (proc.action ? proc.action.name.text.replace(/[^\w]/g, "") : "inline") + "_" + proc.seqNo
+            proc.label = "_" + proc.getName() + "_" + proc.seqNo
         }
 
 
-        stringLiteral(s:string)
-        {
+        stringLiteral(s: string) {
             var r = "\""
             for (var i = 0; i < s.length; ++i) {
                 // TODO generate warning when seeing high character ?
@@ -927,14 +1017,12 @@ namespace mbit
             }
             return r + "\""
         }
-         
-        emitLiteral(s:string)
-        {
+
+        emitLiteral(s: string) {
             this.stringsBody += s + "\n"
         }
 
-        emitString(s:string):string
-        {
+        emitString(s: string): string {
             if (this.strings.hasOwnProperty(s))
                 return this.strings[s]
 
@@ -946,13 +1034,11 @@ namespace mbit
             return lbl
         }
 
-        emit(s:string)
-        {
+        emit(s: string) {
             this.csource += asmline(s)
         }
 
-        serialize()
-        {
+        serialize() {
             ts.Debug.assert(this.csource == "");
 
             this.emit("; start")
@@ -970,22 +1056,20 @@ namespace mbit
             this.emit("_program_end:");
         }
 
-        patchSrcHash()
-        {
+        patchSrcHash() {
             //TODO
             //var srcSha = Random.sha256buffer(Util.stringToUint8Array(Util.toUTF8(this.csource)))
             //this.csource = this.csource.replace(/\n.*@SRCHASH@\n/, "\n    .hex " + srcSha.slice(0, 16).toUpperCase() + " ; program hash\n")
         }
 
-        assemble()
-        {
+        assemble() {
             mbit.testThumb(); // just in case
-            
+
             var b = new ThumbBinary();
             b.lookupExternalLabel = lookupFunctionAddr;
             // b.throwOnError = true;
             b.emit(this.csource);
-            this.csource = b.getSource(!/peepdbg=1/.test(document.URL));
+            this.csource = b.getSource(!peepDbg);
             if (b.errors.length > 0) {
                 var userErrors = ""
                 b.errors.forEach(e => {
@@ -996,7 +1080,7 @@ namespace mbit
                         var no = parseInt(m[1])
                         var proc = this.procs.filter(p => p.seqNo == no)[0]
                         if (proc && proc.action)
-                            userErrors += lf("At function {0}:\n", proc.action.name.text)
+                            userErrors += lf("At function {0}:\n", proc.getName())
                         else
                             userErrors += lf("At inline assembly:\n")
                         userErrors += e.message
@@ -1006,7 +1090,7 @@ namespace mbit
                 if (userErrors) {
                     //TODO
                     console.log(lf("errors in inline assembly"))
-                    console.log(userErrors)                    
+                    console.log(userErrors)
                 } else {
                     throw new Error(b.errors[0].message)
                 }
@@ -1016,23 +1100,22 @@ namespace mbit
         }
     }
 
-    function asmline(s:string)
-    {
+    export var peepDbg = false;
+
+    function asmline(s: string) {
         if (!/(^\s)|(:$)/.test(s))
             s = "    " + s
         return s + "\n"
     }
 
-    function hexTemplateHash()
-    {
+    function hexTemplateHash() {
         var sha = currentSetup ? currentSetup.slice(0, 16) : ""
         while (sha.length < 16) sha += "0"
         return sha.toUpperCase()
     }
 
-    function emptyExtInfo()
-    {
-        return <ExtensionInfo> {
+    function emptyExtInfo() {
+        return <ExtensionInfo>{
             enums: {},
             functions: [],
             errors: "",
@@ -1042,8 +1125,7 @@ namespace mbit
         }
     }
 
-    function setup()
-    {
+    export function setup() {
         if (currentSetup == null)
             setupFor(emptyExtInfo(), null)
     }
