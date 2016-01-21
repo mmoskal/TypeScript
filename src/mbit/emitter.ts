@@ -10,17 +10,23 @@ namespace ts {
         console.log(k)
     }
 
+    function isRefType(t: Type) {
+        return !(t.flags & (TypeFlags.Number | TypeFlags.Boolean | TypeFlags.Enum))
+    }
+
     interface CommentAttrs {
         shim?: string;
         enumval?: string;
     }
 
     let lf = thumb.lf;
-        
+    let checker:TypeChecker;
+
+
     export function emitMBit(program: Program): EmitResult {
 
         const diagnostics = createDiagnosticCollection();
-        const checker = program.getTypeChecker();
+        checker = program.getTypeChecker();
 
         mbit.staticBytecodeInfo = require("./hexinfo.js");
         mbit.setup();
@@ -165,9 +171,6 @@ namespace ts {
                 return ""
             })
             return res
-        }
-        function isRefType(t: Type) {
-            return !(t.flags & (TypeFlags.Number | TypeFlags.Boolean | TypeFlags.Enum))
         }
         function isRefExpr(e: Expression) {
             let tp = checker.getTypeAtLocation(e)
@@ -505,7 +508,7 @@ namespace ts {
 
     module mbit {
         type StringMap<T> = thumb.StringMap<T>;
-        
+
         export interface FuncInfo {
             name: string;
             type: string;
@@ -651,8 +654,9 @@ namespace ts {
             return null
         }
 
-        function isRefKind(def: ts.Declaration) {
-            return false // TODO
+        function isRefDecl(def: ts.Declaration) {  
+            let tp = checker.getDeclaredTypeOfSymbol(def.symbol)
+            return isRefType(tp)          
         }
 
 
@@ -672,7 +676,7 @@ namespace ts {
             }
 
             isRef() {
-                return this.def && isRefKind(this.def)
+                return this.def && isRefDecl(this.def)
             }
 
             isGlobal() {
