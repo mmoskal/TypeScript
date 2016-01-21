@@ -536,7 +536,7 @@ namespace ts {
             var r = ""
             for (var i = 0; i < str.length; i += 2)
                 r = str[i] + str[i + 1] + r
-            ts.Debug.assert(i == str.length)
+            Debug.assert(i == str.length)
             return r
         }
 
@@ -552,7 +552,7 @@ namespace ts {
             if (m)
                 return [parseInt(m[1], 16)].concat(parseHexBytes(bytes.slice(2)))
             else
-                ts.Debug.fail("bad bytes " + bytes)
+                Debug.fail("bad bytes " + bytes)
         }
 
         var currentSetup: string = null;
@@ -588,7 +588,7 @@ namespace ts {
                                 bytes.push(0x00)
                             hex[lastIdx] = hexBytes(bytes)
                         }
-                        ts.Debug.assert((bytes[2] & 0xf) == 0)
+                        Debug.assert((bytes[2] & 0xf) == 0)
 
                         bytecodeStartAddr = lastAddr + 16
                         bytecodeStartIdx = lastIdx + 1
@@ -604,7 +604,7 @@ namespace ts {
             }
 
             if (!jmpStartAddr)
-                ts.Debug.fail("No hex start")
+                Debug.fail("No hex start")
 
             funcInfo = {};
             var funs: FuncInfo[] = jsinf.functions.concat(extInfo.functions);
@@ -633,12 +633,12 @@ namespace ts {
                     if (!inf) return;
                     funcInfo[inf.name] = inf;
                     inf.value = parseInt(swapBytes(s.slice(0, 8)), 16) & 0xfffffffe
-                    ts.Debug.assert(!!inf.value)
+                    Debug.assert(!!inf.value)
                     s = s.slice(8)
                 }
             }
 
-            ts.Debug.fail();
+            Debug.fail();
         }
 
         export function lookupFunc(name: string) {
@@ -654,7 +654,7 @@ namespace ts {
             return null
         }
 
-        function isRefDecl(def: ts.Declaration) {  
+        function isRefDecl(def: Declaration) {  
             let tp = checker.getDeclaredTypeOfSymbol(def.symbol)
             return isRefType(tp)          
         }
@@ -663,7 +663,7 @@ namespace ts {
         export class Location {
             isarg = false;
 
-            constructor(public index: number, public def: ts.DeclarationStatement = null) {
+            constructor(public index: number, public def: DeclarationStatement = null) {
             }
 
             toString() {
@@ -695,7 +695,7 @@ namespace ts {
             }
 
             emitStoreByRef(proc: Procedure) {
-                //ts.Debug.assert(this.def instanceof LocalDef) TODO
+                //Debug.assert(this.def instanceof LocalDef) TODO
 
                 if (this.isByRefLocal()) {
                     this.emitLoadLocal(proc);
@@ -722,13 +722,13 @@ namespace ts {
 
             emitStore(proc: Procedure) {
                 if (this.isarg)
-                    ts.Debug.fail("store for arg")
+                    Debug.fail("store for arg")
 
                 if (this.isGlobal()) {
                     proc.emitInt(this.index)
                     proc.emitCall("bitvm::stglb" + this.refSuff(), 0); // unref internal
                 } else {
-                    ts.Debug.assert(!this.isByRefLocal())
+                    Debug.assert(!this.isByRefLocal())
                     if (this.isRef()) {
                         this.emitLoadCore(proc);
                         proc.emitCallRaw("bitvm::decr");
@@ -752,7 +752,7 @@ namespace ts {
 
             emitLoadLocal(proc: Procedure) {
                 if (this.isarg && proc.argsInR5) {
-                    ts.Debug.assert(0 <= this.index && this.index < 32)
+                    Debug.assert(0 <= this.index && this.index < 32)
                     proc.emit("ldr r0, [r5, #4*" + this.index + "]")
                 } else {
                     this.emitLoadCore(proc)
@@ -764,7 +764,7 @@ namespace ts {
                     proc.emitInt(this.index)
                     proc.emitCall("bitvm::ldglb" + this.refSuff(), 0); // unref internal
                 } else {
-                    ts.Debug.assert(direct || !this.isByRefLocal())
+                    Debug.assert(direct || !this.isByRefLocal())
                     this.emitLoadLocal(proc);
                     proc.emit("push {r0}");
                     if (this.isRef() || this.isByRefLocal()) {
@@ -774,8 +774,8 @@ namespace ts {
             }
 
             emitClrIfRef(proc: Procedure) {
-                // ts.Debug.assert(!this.isarg)
-                ts.Debug.assert(!this.isGlobal())
+                // Debug.assert(!this.isarg)
+                Debug.assert(!this.isGlobal())
                 if (this.isRef() || this.isByRefLocal()) {
                     this.emitLoadCore(proc);
                     proc.emitCallRaw("bitvm::decr");
@@ -786,7 +786,7 @@ namespace ts {
         export class Procedure {
             numArgs = 0;
             hasReturn = false;
-            action: ts.FunctionLikeDeclaration;
+            action: FunctionLikeDeclaration;
             argsInR5 = false;
             seqNo: number;
             lblNo = 0;
@@ -802,18 +802,18 @@ namespace ts {
             }
 
             getName() {
-                let text = this.action ? (<ts.Identifier>this.action.name).text : null
+                let text = this.action ? (<Identifier>this.action.name).text : null
                 return text || "inline"
             }
 
-            mkLocal(def: ts.DeclarationStatement = null) {
+            mkLocal(def: DeclarationStatement = null) {
                 var l = new Location(this.locals.length, def)
                 //if (def) console.log("LOCAL: " + def.getName() + ": ref=" + def.isByRef() + " cap=" + def._isCaptured + " mut=" + def._isMutable)
                 this.locals.push(l)
                 return l
             }
 
-            emitClrs(omit: ts.Declaration, inclArgs = false) {
+            emitClrs(omit: Declaration, inclArgs = false) {
                 var lst = this.locals
                 if (inclArgs)
                     lst = lst.concat(this.args)
@@ -829,9 +829,9 @@ namespace ts {
 
             emitCall(name: string, mask: number) {
                 var inf = lookupFunc(name)
-                ts.Debug.assert(!!inf, "unimplemented function: " + name)
+                Debug.assert(!!inf, "unimplemented function: " + name)
 
-                ts.Debug.assert(inf.args <= 4)
+                Debug.assert(inf.args <= 4)
 
                 if (inf.args >= 4)
                     this.emit("pop {r3}");
@@ -857,7 +857,7 @@ namespace ts {
                     this.emit("@stackmark retval")
                 }
 
-                ts.Debug.assert((mask & ~0xf) == 0)
+                Debug.assert((mask & ~0xf) == 0)
 
                 if (reglist.length > 0)
                     this.emit("push {" + reglist.join(",") + "}")
@@ -874,7 +874,7 @@ namespace ts {
                 else if (inf.type == "P") {
                     // ok
                 }
-                else ts.Debug.fail("invalid call type " + inf.type)
+                else Debug.fail("invalid call type " + inf.type)
 
                 while (numMask-- > 0) {
                     this.emitCall("bitvm::decr", 0);
@@ -896,7 +896,7 @@ namespace ts {
                 } else if (name == "JMP") {
                     // ok
                 } else {
-                    ts.Debug.fail("bad jmp");
+                    Debug.fail("bad jmp");
                 }
 
                 this.emit("bb " + trg)
@@ -917,17 +917,17 @@ namespace ts {
             }
 
             emitMov(v: number) {
-                ts.Debug.assert(0 <= v && v <= 255)
+                Debug.assert(0 <= v && v <= 255)
                 this.emit("movs r0, #" + v)
             }
 
             emitAdd(v: number) {
-                ts.Debug.assert(0 <= v && v <= 255)
+                Debug.assert(0 <= v && v <= 255)
                 this.emit("adds r0, #" + v)
             }
 
             emitLdPtr(lbl: string, push = false) {
-                ts.Debug.assert(!!lbl)
+                Debug.assert(!!lbl)
                 this.emit("movs r0, " + lbl + "@hi   ; ldptr " + lbl)
                 this.emit("lsls r0, r0, #8")
                 this.emit("adds r0, " + lbl + "@lo   ; endldptr");
@@ -936,7 +936,7 @@ namespace ts {
             }
 
             emitInt(v: number, keepInR0 = false) {
-                ts.Debug.assert(v != null);
+                Debug.assert(v != null);
 
                 var n = Math.floor(v)
                 var isNeg = false
@@ -973,7 +973,7 @@ namespace ts {
             }
 
             pushLocals() {
-                ts.Debug.assert(this.prebody == "")
+                Debug.assert(this.prebody == "")
                 this.prebody = this.body
                 this.body = ""
             }
@@ -992,7 +992,7 @@ namespace ts {
 
                 this.body += suff
 
-                ts.Debug.assert(0 <= len && len < 127);
+                Debug.assert(0 <= len && len < 127);
                 if (len > 0) this.emit("add sp, #4*" + len + " ; pop locals " + len)
             }
         }
@@ -1019,14 +1019,14 @@ namespace ts {
             isDataRecord(s: string) {
                 if (!s) return false
                 var m = /^:......(..)/.exec(s)
-                ts.Debug.assert(!!m)
+                Debug.assert(!!m)
                 return m[1] == "00"
             }
 
             patchHex(shortForm: boolean) {
                 var myhex = hex.slice(0, bytecodeStartIdx)
 
-                ts.Debug.assert(this.buf.length < 32000)
+                Debug.assert(this.buf.length < 32000)
 
                 var ptr = 0
 
@@ -1117,7 +1117,7 @@ namespace ts {
             }
 
             serialize() {
-                ts.Debug.assert(this.csource == "");
+                Debug.assert(this.csource == "");
 
                 this.emit("; start")
                 this.emit(".hex 708E3B92C615A841C49866C975EE5197")
