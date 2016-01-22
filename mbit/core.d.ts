@@ -199,10 +199,8 @@ interface String {
     /** Returns a string where all alphabetic characters have been converted to uppercase, taking into account the host environment's current locale. */
     toLocaleUpperCase(): string;
 
-    /** Removes the leading and trailing white space and line terminator characters from a string. */
-    trim(): string;
-
     /** Returns the length of a String object. */
+    // {shim:string::count}
     length: number;
 
     // {shim:string::at}
