@@ -42,7 +42,6 @@ namespace basic {
      * {help:functions/button-is-pressed}
      * {namespace:input}
      * {weight:59}
-     * {enum:name:A=MICROBIT_ID_BUTTON_A,B=MICROBIT_ID_BUTTON_B}
      * {shim:micro_bit::isButtonPressed}
      */
     export function buttonIsPressed(button: Button): boolean { return false; }

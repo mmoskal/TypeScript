@@ -65,12 +65,10 @@ function testNums() : void
     incrBy_2();
     assert(glb1 == 7, "glb1");
     incrBy_2();
-    /* TODO
     assert(glb1 == 9, "glb2");
     assert(Math.abs(-42) == 42, "abs");
     assert(Math.abs(42) == 42, "abs");
     assert(Math.sign(42) == 1, "abs");
-    */
     testIf();
 }
 

@@ -326,6 +326,56 @@ interface RegExp {
 
 }
 
+declare namespace Math {
+    /**
+      * Returns the absolute value of a number (the value without regard to whether it is positive or negative). 
+      * For example, the absolute value of -5 is the same as the absolute value of 5.
+      * @param x A numeric expression for which the absolute value is needed.
+      */
+    // {shim:math::abs}
+    export function abs(x: number): number;
+    
+    /**
+      * Returns the sign of the x, indicating whether x is positive, negative or zero.
+      * @param x The numeric expression to test
+      */
+    // {shim:math::sign}
+    export function sign(x: number): number;
+    
+    /**
+      * Returns the larger of two supplied numeric expressions. 
+      */
+    // {shim:math::max}
+    export function max(a:number, b:number): number;
+    
+    /**
+      * Returns the smaller of two supplied numeric expressions. 
+      */
+    // {shim:math::min}
+    export function min(a:number, b:number): number;
+    
+    /**
+      * Returns the value of a base expression taken to a specified power. 
+      * @param x The base value of the expression.
+      * @param y The exponent value of the expression.
+      */
+    // {shim:math::pow}
+    export function pow(x: number, y: number): number;
+    
+    /** Returns a pseudorandom number between 0 and `max`. */
+    // {shim:math::random}
+    export function random(max:number): number;
+    
+    /**
+      * Returns the square root of a number.
+      * @param x A numeric expression.
+      */
+    // {shim:math::sqrt}
+    export function sqrt(x: number): number;
+}
+
+
+
 interface Console {
     log(message: string): void;
 }
