@@ -14,7 +14,15 @@ namespace ts {
         console.log(stringKind(n))
     }
 
+    function userError(msg: string) {
+        debugger;
+        var e = new Error(msg);
+        (<any>e).bitvmUserError = true;
+        throw e;
+    }
+
     function isRefType(t: Type) {
+        checkType(t);
         return !(t.flags & (TypeFlags.Number | TypeFlags.Boolean | TypeFlags.Enum))
     }
 
@@ -34,6 +42,17 @@ namespace ts {
     let lf = thumb.lf;
     let checker: TypeChecker;
 
+    function checkType(t: Type) {
+        let ok = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | TypeFlags.Void | TypeFlags.Enum
+        if ((t.flags & ok) == 0) {
+            userError(lf("unsupported type: {0}", checker.typeToString(t)))
+        }
+        return t
+    }
+
+    function typeOf(node: Node) {
+        return checkType(checker.getTypeAtLocation(node))
+    }
 
     export function emitMBit(program: Program): EmitResult {
 
@@ -67,13 +86,6 @@ namespace ts {
                 key: msg.replace(/^[a-zA-Z]+/g, "_"),
                 category: DiagnosticCategory.Error,
             }, arg0, arg1, arg2));
-        }
-
-        function userError(msg: string) {
-            debugger;
-            var e = new Error(msg);
-            (<any>e).bitvmUserError = true;
-            throw e;
         }
 
         function unhandled(n: Node, addInfo = "") {
@@ -209,8 +221,7 @@ namespace ts {
             return res
         }
         function isRefExpr(e: Expression) {
-            let tp = checker.getTypeAtLocation(e)
-            return isRefType(tp)
+            return isRefType(typeOf(e))
         }
         function getMask(args: Expression[]) {
             Debug.assert(args.length <= 8)
@@ -225,7 +236,7 @@ namespace ts {
         function emitCallExpression(node: CallExpression) {
             let decl = getDecl(node.expression)
             let attrs = parseComments(decl)
-            let hasRet = !(checker.getTypeAtLocation(node).flags & TypeFlags.Void)
+            let hasRet = !(typeOf(node).flags & TypeFlags.Void)
             let args = node.arguments
 
             if (decl && decl.kind == SyntaxKind.FunctionDeclaration) {
@@ -331,7 +342,7 @@ namespace ts {
         function emitVoidExpression(node: VoidExpression) { }
         function emitAwaitExpression(node: AwaitExpression) { }
         function emitPrefixUnaryExpression(node: PrefixUnaryExpression) {
-            let tp = checker.getTypeAtLocation(node.operand)
+            let tp = typeOf(node.operand)
             if (tp.flags & TypeFlags.Boolean) {
                 if (node.operator == SyntaxKind.ExclamationToken) {
                     emit(node.operand)
@@ -367,7 +378,7 @@ namespace ts {
         }
 
         function emitPostfixUnaryExpression(node: PostfixUnaryExpression) {
-            let tp = checker.getTypeAtLocation(node.operand)
+            let tp = typeOf(node.operand)
 
             if (tp.flags & TypeFlags.Number) {
                 switch (node.operator) {
@@ -384,8 +395,8 @@ namespace ts {
         function isBogusReturn(node: Expression) {
             let par = node.parent
             if (!(par.kind == SyntaxKind.ExpressionStatement ||
-                 (par.kind == SyntaxKind.ForStatement && 
-                  (<ForStatement>par).incrementor == node || (<ForStatement>par).initializer == node)))
+                (par.kind == SyntaxKind.ForStatement &&
+                    (<ForStatement>par).incrementor == node || (<ForStatement>par).initializer == node)))
                 return false
 
             if (node.kind == SyntaxKind.PrefixUnaryExpression || node.kind == SyntaxKind.PostfixUnaryExpression) {
@@ -432,8 +443,8 @@ namespace ts {
                 return
             }
 
-            let lt = checker.getTypeAtLocation(node.left)
-            let rt = checker.getTypeAtLocation(node.right)
+            let lt = typeOf(node.left)
+            let rt = typeOf(node.right)
 
             let shim = (n: string) => {
                 emit(node.left)
@@ -505,7 +516,7 @@ namespace ts {
         }
         function emitAsString(e: Expression) {
             emit(e)
-            let tp = checker.getTypeAtLocation(e)
+            let tp = typeOf(e)
             if (tp.flags & TypeFlags.Number)
                 proc.emitCall("number::to_string", 0)
             else if (tp.flags & TypeFlags.Boolean)
@@ -575,7 +586,7 @@ namespace ts {
         function emitExprAsStmt(node: Expression) {
             if (!node) return;
             emit(node);
-            let a = checker.getTypeAtLocation(node)
+            let a = typeOf(node)
             if (!(a.flags & TypeFlags.Void) && !isBogusReturn(node)) {
                 if (isRefType(a)) {
                     // will pop
@@ -1030,7 +1041,7 @@ namespace ts {
 
         function isRefDecl(def: Declaration) {
             //let tp = checker.getDeclaredTypeOfSymbol(def.symbol)
-            let tp = checker.getTypeAtLocation(def)
+            let tp = typeOf(def)
             return isRefType(tp)
         }
 
