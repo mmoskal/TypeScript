@@ -171,7 +171,9 @@ function testStrings() : void
     assert(s == "live", "hello eq");
     s = s + "4OK";
     s2 = s;
-    //assert(s.codeAt(4) == 52, "hello eq2");
+    assert(s.charCodeAt(4) == 52, "hello eq2");
+    assert(s.charAt(4) == "4", "hello eq2X");
+    assert(s[4] == "4", "hello eq2X");
     s = "";
     for (let i = 0; i < 10; i++) {
         s = s + i;

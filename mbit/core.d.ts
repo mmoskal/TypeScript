@@ -134,19 +134,22 @@ interface String {
       * Returns the character at the specified index.
       * @param pos The zero-based index of the desired character.
       */
+    // {shim:string::at}
     charAt(pos: number): string;
 
     /** 
       * Returns the Unicode value of the character at the specified location.
       * @param index The zero-based index of the desired character. If there is no character at the specified index, NaN is returned.
       */
+    // {shim:string::code_at}
     charCodeAt(index: number): number;
 
     /**
       * Returns a string that contains the concatenation of two or more strings.
       * @param strings The strings to append to the end of the string.  
       */
-    concat(...strings: string[]): string;
+    // {shim:string::concat}
+    concat(other: string): string;
 
     /**
       * Returns the position of the first occurrence of a substring. 
@@ -202,6 +205,7 @@ interface String {
     /** Returns the length of a String object. */
     length: number;
 
+    // {shim:string::at}
     [index: number]: string;
 }
 

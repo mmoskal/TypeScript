@@ -197,7 +197,22 @@ namespace ts {
                 unhandled(node);
             }
         }
-        function emitIndexedAccess(node: ElementAccessExpression) { }
+        
+        function emitIndexedAccess(node: ElementAccessExpression) {
+            let t = typeOf(node.expression)
+            if (t.flags & TypeFlags.String) {
+                if (typeOf(node.argumentExpression).flags & TypeFlags.Number) {
+                    emit(node.expression)
+                    emit(node.argumentExpression)
+                    proc.emitCall("string::at", 1)
+                } else {
+                    unhandled(node, "unsupported string indexer")
+                }
+            } else {
+                unhandled(node, "unsupported indexer")
+            }
+        }
+        
         function getDecl(node: Node): Declaration {
             if (!node) return null
             let sym = checker.getSymbolAtLocation(node)
@@ -237,40 +252,44 @@ namespace ts {
             let decl = getDecl(node.expression)
             let attrs = parseComments(decl)
             let hasRet = !(typeOf(node).flags & TypeFlags.Void)
-            let args = node.arguments
+            let args = node.arguments.slice(0)
+
+            function emitShim() {
+                let nm = attrs.shim
+
+                if (nm == "TD_NOOP") {
+                    Debug.assert(!hasRet)
+                    return
+                }
+
+                if (nm == "TD_ID") {
+                    Debug.assert(args.length == 1)
+                    emit(args[0])
+                    return
+                }
+
+                let inf = mbit.lookupFunc(attrs.shim)
+                if (inf) {
+                    if (!hasRet) {
+                        if (inf.type != "P")
+                            userError("expecting procedure for " + nm);
+                    } else {
+                        if (inf.type != "F")
+                            userError("expecting function for " + nm);
+                    }
+                    if (args.length != inf.args)
+                        userError("argument number mismatch: " + args.length + " vs " + inf.args)
+                } else {
+                    userError("function not found: " + nm)
+                }
+
+                args.forEach(emit)
+                proc.emitCall(attrs.shim, getMask(args));
+            }
 
             if (decl && decl.kind == SyntaxKind.FunctionDeclaration) {
                 if (attrs.shim) {
-                    let nm = attrs.shim
-
-                    if (nm == "TD_NOOP") {
-                        Debug.assert(!hasRet)
-                        return
-                    }
-
-                    if (nm == "TD_ID") {
-                        Debug.assert(args.length == 1)
-                        emit(args[0])
-                        return
-                    }
-
-                    let inf = mbit.lookupFunc(attrs.shim)
-                    if (inf) {
-                        if (!hasRet) {
-                            if (inf.type != "P")
-                                userError("expecting procedure for " + nm);
-                        } else {
-                            if (inf.type != "F")
-                                userError("expecting function for " + nm);
-                        }
-                        if (args.length != inf.args)
-                            userError("argument number mismatch: " + args.length + " vs " + inf.args)
-                    } else {
-                        userError("function not found: " + nm)
-                    }
-
-                    args.forEach(emit)
-                    proc.emitCall(attrs.shim, getMask(args));
+                    emitShim();
                     return;
                 }
 
@@ -281,6 +300,19 @@ namespace ts {
                 if (hasRet)
                     proc.emit("push {r0}");
                 return
+            }
+
+            if (decl && decl.kind == SyntaxKind.MethodSignature) {
+                if (attrs.shim) {
+                    if (node.expression.kind == SyntaxKind.PropertyAccessExpression)
+                        args.unshift((<PropertyAccessExpression>node.expression).expression)
+                    else
+                        unhandled(node, "strange method call")
+                    emitShim();
+                    return;
+                }
+
+                unhandled(node, "non-shim method call");
             }
 
             unhandled(node, stringKind(decl))
@@ -770,13 +802,14 @@ namespace ts {
                     return emitLabeledStatement(<LabeledStatement>node);
                 case SyntaxKind.ReturnStatement:
                     return emitReturnStatement(<ReturnStatement>node);
-
                 case SyntaxKind.BinaryExpression:
                     return emitBinaryExpression(<BinaryExpression>node);
                 case SyntaxKind.PrefixUnaryExpression:
                     return emitPrefixUnaryExpression(<PrefixUnaryExpression>node);
                 case SyntaxKind.PostfixUnaryExpression:
                     return emitPostfixUnaryExpression(<PostfixUnaryExpression>node);
+                case SyntaxKind.ElementAccessExpression:
+                    return emitIndexedAccess(<ElementAccessExpression>node);
 
                 default:
                     unhandled(node);
@@ -824,8 +857,6 @@ namespace ts {
                     return emitShorthandPropertyAssignment(<ShorthandPropertyAssignment>node);
                 case SyntaxKind.ComputedPropertyName:
                     return emitComputedPropertyName(<ComputedPropertyName>node);
-                case SyntaxKind.ElementAccessExpression:
-                    return emitIndexedAccess(<ElementAccessExpression>node);
                 case SyntaxKind.NewExpression:
                     return emitNewExpression(<NewExpression>node);
                 case SyntaxKind.TaggedTemplateExpression:
