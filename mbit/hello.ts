@@ -17,9 +17,9 @@ export function main() : void
     showDigit(3);
     testNums();
     testStrings();
-    /*
     testNumCollection();
     showDigit(2);
+    /*
     testStringCollection();
     showDigit(4);
     testReccoll();
@@ -196,7 +196,7 @@ function testStrings() : void
 
 function testNumCollection() : void
 {
-    let coll = (<number[]>[]);
+    let coll:number[] = [];
     assert(coll.length == 0, "");
     coll.push(42);
     assert(coll.length == 1, "");
@@ -210,6 +210,12 @@ function testNumCollection() : void
         coll.push(i);
     }
     assert(coll.length == 100, "");
+
+    coll = [1, 2, 3];
+    assert(coll.length == 3, "cons");
+    assert(coll[0] == 1, "cons0");
+    assert(coll[1] == 2, "cons1");
+    assert(coll[2] == 3, "cons2");
 }
 
 

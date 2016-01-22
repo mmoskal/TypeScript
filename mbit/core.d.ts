@@ -45,7 +45,7 @@ interface Array<T> {
     removeElement(element:T) : boolean;
     
     /** Removes the object at position index. */
-    // {shim:collection::removeAt}
+    // {shim:collection::remove_at}
     removeAt(idx:number) : void;
     
     
@@ -69,7 +69,7 @@ interface Array<T> {
       * @param searchElement The value to locate in the array.
       * @param fromIndex The array index at which to begin the search. If fromIndex is omitted, the search starts at index 0.
       */
-    // {shim:collection::indexOf}
+    // {shim:collection::index_of}
     indexOf(searchElement: T, fromIndex: number): number;
 
 

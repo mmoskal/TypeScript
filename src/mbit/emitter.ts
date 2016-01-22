@@ -37,21 +37,38 @@ namespace ts {
     interface CommentAttrs {
         shim?: string;
         enumval?: string;
+        helper?: string;
     }
 
     let lf = thumb.lf;
     let checker: TypeChecker;
 
+
+    function isArrayType(t: Type) {
+        return (t.flags & TypeFlags.Reference) && t.symbol.name == "Array"
+    }
+
+    function arrayElementType(t: Type): Type {
+        if (isArrayType(t))
+            return checkType((<TypeReference>t).typeArguments[0])
+        return null;
+    }
+
     function checkType(t: Type) {
         let ok = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | TypeFlags.Void | TypeFlags.Enum
         if ((t.flags & ok) == 0) {
+            if (isArrayType(t)) return t;
             userError(lf("unsupported type: {0}", checker.typeToString(t)))
         }
         return t
     }
 
     function typeOf(node: Node) {
-        return checkType(checker.getTypeAtLocation(node))
+        let r: Type;
+        if (isExpression(node))
+            r = checker.getContextualType(<Expression>node)
+        if (!r) r = checker.getTypeAtLocation(node);
+        return checkType(r)
     }
 
     export function emitMBit(program: Program): EmitResult {
@@ -172,7 +189,29 @@ namespace ts {
         function emitObjectBindingPattern(node: BindingPattern) { }
         function emitArrayBindingPattern(node: BindingPattern) { }
         function emitBindingElement(node: BindingElement) { }
-        function emitArrayLiteral(node: ArrayLiteralExpression) { }
+        function emitArrayLiteral(node: ArrayLiteralExpression) {
+            let eltT = arrayElementType(typeOf(node))
+            let isRef = isRefType(eltT)
+            if (eltT.flags & TypeFlags.String)
+                proc.emitInt(3);
+            else if (isRef)
+                proc.emitInt(1);
+            else
+                proc.emitInt(0);
+            proc.emitCall("collection::mk", 0)
+            for (let elt of node.elements) {
+                emit(elt)
+                proc.emit("pop {r1}")
+                proc.emit("ldr r0, [sp, #0]")
+                if (isRef)
+                    proc.emit("push {r1}")
+                proc.emitCallRaw("collection::add")
+                if (isRef) {
+                    proc.emit("pop {r0}")
+                    proc.emitCallRaw("bitvm::decr")
+                }
+            }
+        }
         function emitObjectLiteral(node: ObjectLiteralExpression) { }
         function emitPropertyAssignment(node: PropertyDeclaration) { }
         function emitShorthandPropertyAssignment(node: ShorthandPropertyAssignment) { }
@@ -206,13 +245,20 @@ namespace ts {
 
         function emitIndexedAccess(node: ElementAccessExpression) {
             let t = typeOf(node.expression)
-            if (t.flags & TypeFlags.String) {
+
+            let collType = ""
+            if (t.flags & TypeFlags.String)
+                collType = "string"
+            else if (isArrayType(t))
+                collType = "collection"
+
+            if (collType) {
                 if (typeOf(node.argumentExpression).flags & TypeFlags.Number) {
                     emit(node.expression)
                     emit(node.argumentExpression)
-                    proc.emitCall("string::at", 1)
+                    proc.emitCall(collType + "::at", 1)
                 } else {
-                    unhandled(node, "unsupported string indexer")
+                    unhandled(node, lf("non-numeric indexer on {0}", collType))
                 }
             } else {
                 unhandled(node, "unsupported indexer")
@@ -295,6 +341,16 @@ namespace ts {
             let hasRet = !(typeOf(node).flags & TypeFlags.Void)
             let args = node.arguments.slice(0)
 
+            function emitPlain() {
+                args.forEach(emit)
+                proc.emit("bl " + getFunctionLabel(<FunctionLikeDeclaration>decl))
+                if (args.length > 0)
+                    proc.emit("add sp, #4*" + args.length)
+                if (hasRet)
+                    proc.emit("push {r0}");
+
+            }
+
 
             if (decl && decl.kind == SyntaxKind.FunctionDeclaration) {
                 if (attrs.shim) {
@@ -302,23 +358,29 @@ namespace ts {
                     return;
                 }
 
-                args.forEach(emit)
-                proc.emit("bl " + getFunctionLabel(<FunctionLikeDeclaration>decl))
-                if (args.length > 0)
-                    proc.emit("add sp, #4*" + args.length)
-                if (hasRet)
-                    proc.emit("push {r0}");
+                emitPlain();
                 return
             }
 
             if (decl && decl.kind == SyntaxKind.MethodSignature) {
+                if (node.expression.kind == SyntaxKind.PropertyAccessExpression)
+                    args.unshift((<PropertyAccessExpression>node.expression).expression)
+                else
+                    unhandled(node, "strange method call")
                 if (attrs.shim) {
-                    if (node.expression.kind == SyntaxKind.PropertyAccessExpression)
-                        args.unshift((<PropertyAccessExpression>node.expression).expression)
-                    else
-                        unhandled(node, "strange method call")
                     emitShim(decl, node, args);
                     return;
+                } else if (attrs.helper) {
+                    let syms = checker.getSymbolsInScope(node, SymbolFlags.Module)
+                    let helpersModule = <ModuleDeclaration>syms.filter(s => s.name == "helpers")[0].valueDeclaration;
+                    let helperStmt = (<ModuleBlock>helpersModule.body).statements.filter(s => s.symbol.name == attrs.helper)[0]
+                    if (!helperStmt)
+                        userError(lf("helpers.{0} not found", attrs.helper))
+                    if (helperStmt.kind != SyntaxKind.FunctionDeclaration)
+                        userError(lf("helpers.{0} isn't a function", attrs.helper))
+                    decl = <FunctionDeclaration>helperStmt;
+                    emitPlain();
+                    return
                 }
 
                 unhandled(node, "non-shim method call");
@@ -334,9 +396,13 @@ namespace ts {
         }
         function emitNewExpression(node: NewExpression) { }
         function emitTaggedTemplateExpression(node: TaggedTemplateExpression) { }
-        function emitTypeAssertion(node: TypeAssertion) { }
+        function emitTypeAssertion(node: TypeAssertion) {
+            emit(node.expression)
+        }
         function emitAsExpression(node: AsExpression) { }
-        function emitParenExpression(node: ParenthesizedExpression) { }
+        function emitParenExpression(node: ParenthesizedExpression) {
+            emit(node.expression)
+        }
         function emitFunctionDeclaration(node: FunctionLikeDeclaration) {
             if (node.flags & NodeFlags.Ambient)
                 return;
@@ -726,7 +792,7 @@ namespace ts {
         function emitModuleDeclaration(node: ModuleDeclaration) {
             if (node.flags & NodeFlags.Ambient)
                 return;
-            unhandled(node);
+            emit(node.body);
         }
         function emitImportDeclaration(node: ImportDeclaration) { }
         function emitImportEqualsDeclaration(node: ImportEqualsDeclaration) { }
@@ -745,11 +811,7 @@ namespace ts {
             try {
                 emitNodeCore(node);
             } catch (e) {
-                if (e.bitvmUserError) {
-                    error(node, e.message)
-                } else {
-                    throw e;
-                }
+                error(node, e.message)
             }
         }
 
@@ -819,7 +881,12 @@ namespace ts {
                     return emitPostfixUnaryExpression(<PostfixUnaryExpression>node);
                 case SyntaxKind.ElementAccessExpression:
                     return emitIndexedAccess(<ElementAccessExpression>node);
-
+                case SyntaxKind.ParenthesizedExpression:
+                    return emitParenExpression(<ParenthesizedExpression>node);
+                case SyntaxKind.TypeAssertionExpression:
+                    return emitTypeAssertion(<TypeAssertion>node);
+                case SyntaxKind.ArrayLiteralExpression:
+                    return emitArrayLiteral(<ArrayLiteralExpression>node);
                 default:
                     unhandled(node);
 
@@ -856,8 +923,6 @@ namespace ts {
                     return emitArrayBindingPattern(<BindingPattern>node);
                 case SyntaxKind.BindingElement:
                     return emitBindingElement(<BindingElement>node);
-                case SyntaxKind.ArrayLiteralExpression:
-                    return emitArrayLiteral(<ArrayLiteralExpression>node);
                 case SyntaxKind.ObjectLiteralExpression:
                     return emitObjectLiteral(<ObjectLiteralExpression>node);
                 case SyntaxKind.PropertyAssignment:
@@ -870,12 +935,8 @@ namespace ts {
                     return emitNewExpression(<NewExpression>node);
                 case SyntaxKind.TaggedTemplateExpression:
                     return emitTaggedTemplateExpression(<TaggedTemplateExpression>node);
-                case SyntaxKind.TypeAssertionExpression:
-                    return emitTypeAssertion(<TypeAssertion>node);
                 case SyntaxKind.AsExpression:
                     return emitAsExpression(<AsExpression>node);
-                case SyntaxKind.ParenthesizedExpression:
-                    return emitParenExpression(<ParenthesizedExpression>node);
                 case SyntaxKind.DeleteExpression:
                     return emitDeleteExpression(<DeleteExpression>node);
                 case SyntaxKind.TypeOfExpression:
