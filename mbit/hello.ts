@@ -19,9 +19,9 @@ export function main() : void
     testStrings();
     testNumCollection();
     showDigit(2);
-    /*
     testStringCollection();
     showDigit(4);
+    /*
     testReccoll();
     showDigit(5);
     testAction(1);
@@ -218,6 +218,22 @@ function testNumCollection() : void
     assert(coll[2] == 3, "cons2");
 }
 
+function testStringCollection() : void
+{
+    let coll = (<string[]>[]);
+    coll.push("foobar");
+    coll.push((12).toString());
+    coll.push(coll[0] + "xx");
+    assert(coll.indexOf("12", 0) == 1, "idx");
+    coll = [
+        "a" + "b",
+        coll[2],        
+    ]
+    assert(coll[0] == "ab", "")
+    assert(coll[1] == "foobarxx", "")
+    assert(coll.length == 2, "")
+}
+
 
 /*
 
@@ -228,15 +244,6 @@ class Testrec
     num: number;
     bool: boolean;
     str2: string;
-}
-
-function testStringCollection() : void
-{
-    let coll = (<string[]>[]);
-    coll.push("foobar");
-    coll.push(12.toString());
-    coll.push(coll[0] + "xx");
-    assert(coll.indexOf("12", 0) == 1, "idx");
 }
 
 function testRec0() : Testrec
