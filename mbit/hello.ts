@@ -9,6 +9,8 @@ var sum: number;
 
 export function main() : void
 {
+    console.log("Starting...")
+    
     //testLazyOps();
     
     //lib.print_17(3);
@@ -116,18 +118,12 @@ function showDigit(code2: number) : void
 {
 }
 
-// {shim:micro_bit::serialSendString}
-function sendString(s: string)
-{
-}
-
 /**
  * Print message
  */
 function msg(s: string) : void
 {
-    sendString(s);
-    sendString("\r\n");
+    console.log(s)
     basic.pause(50);
 }
 

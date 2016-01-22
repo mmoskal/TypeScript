@@ -373,13 +373,3 @@ declare namespace Math {
     // {shim:math::sqrt}
     export function sqrt(x: number): number;
 }
-
-
-
-interface Console {
-    log(message: string): void;
-}
-
-declare var console: Console;
-
-
