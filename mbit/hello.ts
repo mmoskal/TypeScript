@@ -16,9 +16,8 @@ export function main() : void
     //assert(lib3.getX() == 17 * 3, "");
     showDigit(3);
     testNums();
-    /*
-    showDigit(1);
     testStrings();
+    /*
     testNumCollection();
     showDigit(2);
     testStringCollection();
@@ -44,6 +43,8 @@ export function main() : void
     testByRefParams();
     //TD.basic.showLeds("0 1 0 1 0\n0 0 0 0 0\n0 0 1 0 0\n1 0 0 0 1\n0 1 1 1 0", 400);
     */
+
+    showDigit(1);
 }
 
 function testNums() : void
@@ -56,7 +57,6 @@ function testNums() : void
     let r = fib(15);
     msg("FIB" + r);
     showDigit(8);
-    showDigit(r);
     assert(r == 987, "fib");
     let x3 = doStuff(x, 2);
     assert(x3 == 10, "call order");
@@ -117,7 +117,7 @@ function showDigit(code2: number) : void
 {
 }
 
-// {shim:bitvm::uBitSerialSendString}
+// {shim:micro_bit::serialSendString}
 function sendString(s: string)
 {
 }
@@ -128,6 +128,7 @@ function sendString(s: string)
 function msg(s: string) : void
 {
     sendString(s);
+    sendString("\r\n");
     basic.pause(50);
 }
 
@@ -164,19 +165,6 @@ function incrBy_2() : void
     glb1 = glb1 + 2;
 }
 
-
-
-/*
-
-
-class Testrec
-{
-    str: string;
-    num: number;
-    bool: boolean;
-    str2: string;
-}
-
 function testStrings() : void
 {
     let s = "live";
@@ -192,12 +180,25 @@ function testStrings() : void
     let x = 10;
     s = "";
     while (x >= 0) {
-        s = s + x.toString();
+        s = s + x;
         x = x - 1;
     }
     assert(s == "109876543210", "while");
     msg(s);
     msg(s2);
+}
+
+
+
+/*
+
+
+class Testrec
+{
+    str: string;
+    num: number;
+    bool: boolean;
+    str2: string;
 }
 
 function testNumCollection() : void

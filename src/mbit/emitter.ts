@@ -5,9 +5,13 @@
 namespace ts {
     declare var require: any;
 
+    function stringKind(n: Node) {
+        if (!n) return "<null>"
+        return (<any>ts).SyntaxKind[n.kind]
+    }
+
     function inspect(n: Node) {
-        var k = (<any>ts).SyntaxKind[n.kind]
-        console.log(k)
+        console.log(stringKind(n))
     }
 
     function isRefType(t: Type) {
@@ -15,7 +19,7 @@ namespace ts {
     }
 
     function isGlobalVar(d: Declaration) {
-        return d.kind == SyntaxKind.VariableDeclaration && d.parent.parent.kind == SyntaxKind.SourceFile;
+        return d.kind == SyntaxKind.VariableDeclaration && d.parent.parent.parent.kind == SyntaxKind.SourceFile;
     }
 
     function isLocalVar(d: Declaration) {
@@ -66,13 +70,16 @@ namespace ts {
         }
 
         function userError(msg: string) {
+            debugger;
             var e = new Error(msg);
             (<any>e).bitvmUserError = true;
             throw e;
         }
 
-        function unhandled(n: Node) {
-            userError(lf("Unsupported syntax node: {0}", (<any>ts).SyntaxKind[n.kind]));
+        function unhandled(n: Node, addInfo = "") {
+            if (addInfo)
+                addInfo = " (" + addInfo + ")"
+            userError(lf("Unsupported syntax node: {0}", stringKind(n)) + addInfo);
         }
 
         function scope(f: () => void) {
@@ -89,19 +96,36 @@ namespace ts {
                 return;
             bin.serialize();
             bin.patchSrcHash();
+            fs.writeFileSync("microbit.asm", bin.csource)
             bin.assemble();
             const hex = bin.patchHex(false).join("\r\n") + "\r\n"
-            fs.writeFileSync("microbit.asm", bin.csource)
+            fs.writeFileSync("microbit.asm", bin.csource) // optimized
             fs.writeFileSync("microbit.hex", hex)
+        }
+
+        function lookupLocation(decl: Declaration): mbit.Location {
+            if (isGlobalVar(decl)) {
+                let ex = bin.globals.filter(l => l.def == decl)[0]
+                if (!ex) {
+                    ex = new mbit.Location(bin.globals.length, decl)
+                    bin.globals.push(ex)
+                }
+                return ex
+            } else {
+                let res = proc.localIndex(decl)
+                if (!res)
+                    userError(lf("cannot locate identifer"))
+                return res
+            }
         }
 
         function emitIdentifier(node: Identifier) {
             let decl = getDecl(node)
-            if (decl && decl.kind == SyntaxKind.VariableDeclaration) {
-                let l = proc.localIndex(decl)
+            if (decl && (decl.kind == SyntaxKind.VariableDeclaration || decl.kind == SyntaxKind.Parameter)) {
+                let l = lookupLocation(decl)
                 l.emitLoad(proc);
             } else {
-                unhandled(node)
+                unhandled(node, "id")
             }
         }
 
@@ -188,7 +212,7 @@ namespace ts {
             let tp = checker.getTypeAtLocation(e)
             return isRefType(tp)
         }
-        function getMask(args: NodeArray<Expression>) {
+        function getMask(args: Expression[]) {
             Debug.assert(args.length <= 8)
             var m = 0
             args.forEach((a, i) => {
@@ -239,6 +263,7 @@ namespace ts {
                     return;
                 }
 
+                args.forEach(emit)
                 proc.emit("bl " + getFunctionLabel(<FunctionLikeDeclaration>decl))
                 if (args.length > 0)
                     proc.emit("add sp, #4*" + args.length)
@@ -246,10 +271,10 @@ namespace ts {
                     proc.emit("push {r0}");
                 return
             }
-            
-            unhandled(node)
+
+            unhandled(node, stringKind(decl))
         }
-        
+
         function getFunctionLabel(node: FunctionLikeDeclaration) {
             let text = node ? (<Identifier>node.name).text : null
             text = text || "inline"
@@ -305,9 +330,191 @@ namespace ts {
         function emitTypeOfExpression(node: TypeOfExpression) { }
         function emitVoidExpression(node: VoidExpression) { }
         function emitAwaitExpression(node: AwaitExpression) { }
-        function emitPrefixUnaryExpression(node: PrefixUnaryExpression) { }
-        function emitPostfixUnaryExpression(node: PostfixUnaryExpression) { }
-        function emitBinaryExpression(node: BinaryExpression) { }
+        function emitPrefixUnaryExpression(node: PrefixUnaryExpression) {
+            let tp = checker.getTypeAtLocation(node.operand)
+            if (tp.flags & TypeFlags.Boolean) {
+                if (node.operator == SyntaxKind.ExclamationToken) {
+                    emit(node.operand)
+                    proc.emitCall("boolean::not_", 0)
+                    return
+                }
+            }
+
+            if (tp.flags & TypeFlags.Number) {
+                switch (node.operator) {
+                    case SyntaxKind.PlusPlusToken:
+                        return emitIncrement(node, "number::add", false)
+                    case SyntaxKind.MinusMinusToken:
+                        return emitIncrement(node, "number::subtract", false)
+                    default: unhandled(node, "postfix unary number")
+                }
+            }
+
+            unhandled(node, "prefix unary");
+        }
+
+        function emitIncrement(expr: PrefixUnaryExpression | PostfixUnaryExpression, meth: string, post: boolean) {
+            // TODO expr evaluated twice
+            let bogus = isBogusReturn(expr)
+            emit(expr.operand)
+            if (!post && !bogus)
+                proc.emit("push {r0}")
+            proc.emitInt(1)
+            proc.emitCall(meth, 0)
+            if (post && !bogus)
+                proc.emit("push {r0}")
+            emitStore(expr.operand)
+        }
+
+        function emitPostfixUnaryExpression(node: PostfixUnaryExpression) {
+            let tp = checker.getTypeAtLocation(node.operand)
+
+            if (tp.flags & TypeFlags.Number) {
+                switch (node.operator) {
+                    case SyntaxKind.PlusPlusToken:
+                        return emitIncrement(node, "number::add", true)
+                    case SyntaxKind.MinusMinusToken:
+                        return emitIncrement(node, "number::subtract", true)
+                    default: unhandled(node, "postfix unary number")
+                }
+            }
+            unhandled(node)
+        }
+
+        function isBogusReturn(node: Expression) {
+            let par = node.parent
+            if (!(par.kind == SyntaxKind.ExpressionStatement ||
+                 (par.kind == SyntaxKind.ForStatement && 
+                  (<ForStatement>par).incrementor == node || (<ForStatement>par).initializer == node)))
+                return false
+
+            if (node.kind == SyntaxKind.PrefixUnaryExpression || node.kind == SyntaxKind.PostfixUnaryExpression) {
+                let iexpr = <PrefixUnaryExpression | PostfixUnaryExpression>node
+                return iexpr.operator == SyntaxKind.PlusPlusToken || iexpr.operator == SyntaxKind.MinusMinusToken
+            }
+
+            if (node.kind == SyntaxKind.BinaryExpression) {
+                let bexpr = <BinaryExpression>node
+                return (bexpr.operatorToken.kind == SyntaxKind.EqualsToken)
+            }
+        }
+
+        function emitStore(expr: Expression) {
+            if (expr.kind == SyntaxKind.Identifier) {
+                let decl = getDecl(expr)
+                if (decl && (decl.kind == SyntaxKind.VariableDeclaration || decl.kind == SyntaxKind.Parameter)) {
+                    let l = lookupLocation(decl)
+                    l.emitStore(proc)
+                } else {
+                    unhandled(expr, "target identifier")
+                }
+            } else {
+                unhandled(expr, "assignment target")
+            }
+
+        }
+
+        function handleAssignment(node: BinaryExpression) {
+            emit(node.right)
+            if (!isBogusReturn(node)) {
+                proc.emit("pop {r0}")
+                proc.emit("push {r0}")
+                proc.emit("push {r0}")
+                if (isRefType)
+                    proc.emitCallRaw("bitvm::incr");
+            }
+            emitStore(node.left)
+        }
+
+        function emitBinaryExpression(node: BinaryExpression) {
+            if (node.operatorToken.kind == SyntaxKind.EqualsToken) {
+                handleAssignment(node);
+                return
+            }
+
+            let lt = checker.getTypeAtLocation(node.left)
+            let rt = checker.getTypeAtLocation(node.right)
+
+            let shim = (n: string) => {
+                emit(node.left)
+                emit(node.right)
+                proc.emitCall(n, getMask([node.left, node.right]))
+            }
+
+            if ((lt.flags & TypeFlags.Number) && (rt.flags & TypeFlags.Number)) {
+                switch (node.operatorToken.kind) {
+                    case SyntaxKind.PlusToken:
+                        return shim("number::add");
+                    case SyntaxKind.MinusToken:
+                        return shim("number::subtract");
+                    case SyntaxKind.SlashToken:
+                        return shim("number::divide");
+                    case SyntaxKind.AsteriskToken:
+                        return shim("number::multiply");
+                    case SyntaxKind.LessThanEqualsToken:
+                        return shim("number::le");
+                    case SyntaxKind.LessThanToken:
+                        return shim("number::lt");
+                    case SyntaxKind.GreaterThanEqualsToken:
+                        return shim("number::ge");
+                    case SyntaxKind.GreaterThanToken:
+                        return shim("number::gt");
+                    case SyntaxKind.EqualsEqualsToken:
+                    case SyntaxKind.EqualsEqualsEqualsToken:
+                        return shim("number::eq");
+                    case SyntaxKind.ExclamationEqualsEqualsToken:
+                    case SyntaxKind.ExclamationEqualsToken:
+                        return shim("number::neq");
+                    default:
+                        unhandled(node.operatorToken, "numeric operator")
+                }
+            }
+
+            if (node.operatorToken.kind == SyntaxKind.PlusToken) {
+                if ((lt.flags & TypeFlags.String) || (rt.flags & TypeFlags.String)) {
+                    emitAsString(node.left)
+                    emitAsString(node.right)
+                    proc.emitCall("string::concat_op", 3)
+                    return
+                }
+            }
+
+            if ((lt.flags & TypeFlags.String) && (rt.flags & TypeFlags.String)) {
+                switch (node.operatorToken.kind) {
+                    case SyntaxKind.LessThanEqualsToken:
+                        return shim("string::le");
+                    case SyntaxKind.LessThanToken:
+                        return shim("string::lt");
+                    case SyntaxKind.GreaterThanEqualsToken:
+                        return shim("string::ge");
+                    case SyntaxKind.GreaterThanToken:
+                        return shim("string::gt");
+                    case SyntaxKind.EqualsEqualsToken:
+                    case SyntaxKind.EqualsEqualsEqualsToken:
+                        return shim("string::equals");
+                    case SyntaxKind.ExclamationEqualsEqualsToken:
+                    case SyntaxKind.ExclamationEqualsToken:
+                        return shim("string::neq");
+                    default:
+                        unhandled(node.operatorToken, "numeric operator")
+                }
+
+            }
+
+            unhandled(node.operatorToken)
+        }
+        function emitAsString(e: Expression) {
+            emit(e)
+            let tp = checker.getTypeAtLocation(e)
+            if (tp.flags & TypeFlags.Number)
+                proc.emitCall("number::to_string", 0)
+            else if (tp.flags & TypeFlags.Boolean)
+                proc.emitCall("boolean::to_string", 0)
+            else if (tp.flags & TypeFlags.String) {
+                // OK
+            } else
+                userError(lf("don't know how to convert to string"))
+        }
         function emitConditionalExpression(node: ConditionalExpression) { }
         function emitSpreadElementExpression(node: SpreadElementExpression) { }
         function emitYieldExpression(node: YieldExpression) { }
@@ -315,7 +522,6 @@ namespace ts {
             node.statements.forEach(emit)
         }
         function emitVariableStatement(node: VariableStatement) {
-            let isGlobal = node.parent == currentSourceFile;
             if (node.flags & NodeFlags.Ambient)
                 return;
             node.declarationList.declarations.forEach(emit);
@@ -370,7 +576,7 @@ namespace ts {
             if (!node) return;
             emit(node);
             let a = checker.getTypeAtLocation(node)
-            if (!(a.flags & TypeFlags.Void)) {
+            if (!(a.flags & TypeFlags.Void) && !isBogusReturn(node)) {
                 if (isRefType(a)) {
                     // will pop
                     proc.emitCall("bitvm::decr", 0);
@@ -554,6 +760,13 @@ namespace ts {
                 case SyntaxKind.ReturnStatement:
                     return emitReturnStatement(<ReturnStatement>node);
 
+                case SyntaxKind.BinaryExpression:
+                    return emitBinaryExpression(<BinaryExpression>node);
+                case SyntaxKind.PrefixUnaryExpression:
+                    return emitPrefixUnaryExpression(<PrefixUnaryExpression>node);
+                case SyntaxKind.PostfixUnaryExpression:
+                    return emitPostfixUnaryExpression(<PostfixUnaryExpression>node);
+
                 default:
                     unhandled(node);
 
@@ -620,12 +833,6 @@ namespace ts {
                     return emitVoidExpression(<VoidExpression>node);
                 case SyntaxKind.AwaitExpression:
                     return emitAwaitExpression(<AwaitExpression>node);
-                case SyntaxKind.PrefixUnaryExpression:
-                    return emitPrefixUnaryExpression(<PrefixUnaryExpression>node);
-                case SyntaxKind.PostfixUnaryExpression:
-                    return emitPostfixUnaryExpression(<PostfixUnaryExpression>node);
-                case SyntaxKind.BinaryExpression:
-                    return emitBinaryExpression(<BinaryExpression>node);
                 case SyntaxKind.ConditionalExpression:
                     return emitConditionalExpression(<ConditionalExpression>node);
                 case SyntaxKind.SpreadElementExpression:
