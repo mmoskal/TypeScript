@@ -167,7 +167,7 @@ function incrBy_2() : void
 
 function testStrings() : void
 {
-    assert(42.toString() == "42", "42");
+    assert((42).toString() == "42", "42");
 
     let s = "live";
     assert(s == "live", "hello eq");
@@ -204,7 +204,7 @@ function testNumCollection() : void
     assert(coll[1] == 22, "");
     coll.splice(0, 1);
     assert(coll[0] == 22, "");
-    coll.remove(22);
+    coll.removeElement(22);
     assert(coll.length == 0, "");
     for (let i = 0; i < 100; i++) {
         coll.push(i);
