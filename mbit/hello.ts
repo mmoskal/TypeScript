@@ -10,7 +10,7 @@ var sum: number;
 export function main() : void
 {
     //testLazyOps();
-    //testStringOps();
+    
     //lib.print_17(3);
     showDigit(0);
     //assert(lib3.getX() == 17 * 3, "");
@@ -20,10 +20,11 @@ export function main() : void
     testNumCollection();
     showDigit(2);
     testStringCollection();
-    showDigit(4);
-    /*
-    testReccoll();
+    testStringOps();
+    showDigit(4);    
+    //testReccoll();
     showDigit(5);
+    /*
     testAction(1);
     showDigit(6);
     testAction(7);
@@ -234,10 +235,19 @@ function testStringCollection() : void
     assert(coll.length == 2, "")
 }
 
+function testStringOps() : void
+{
+    assert("foo".concat("bar") == "foobar", "concat");
+    assert("xAb".charCodeAt(1) == 65, "code at");
+    assert("B".charCodeAt(0) == 66, "tcc");
+    assert(parseInt("-123") == -123, "tonum");
+    assert("fo"[1] == "o", "at");
+    assert("fo".length == 2, "count");
+    assert("fo".charCodeAt(17) == 0, "ct oor");
+}
+
 
 /*
-
-
 class Testrec
 {
     str: string;
@@ -248,7 +258,6 @@ class Testrec
 
 function testRec0() : Testrec
 {
-    let r: Testrec;
     let testrec = new Testrec();
     testrec.str2 = "Hello" + " world";
     testrec.str = testrec.str2;
@@ -258,10 +267,9 @@ function testRec0() : Testrec
     msg(testrec.str2);
     let testrec2 = (<Testrec>null);
     assert(testrec2 == null, "isinv");
-    assert(testrec.equals(testrec), "eq");
+    assert(testrec == testrec, "eq");
     assert(testrec != null, "non inv");
     return testrec;
-    return r;
 }
 
 function testReccoll() : void
@@ -271,6 +279,10 @@ function testReccoll() : void
     msg("in reccoll");
     coll.push(item);
 }
+
+
+/*
+
 
 function runTwice(fn:Action) : void
 {
@@ -318,17 +330,6 @@ function testActionSave() : void
     action = (<Action>null);
 }
 
-
-function testStringOps() : void
-{
-    assert("foo".concat("bar") == "foobar", "concat");
-    assert("xAb".codeAt(1) == 65, "code at");
-    assert("B".toCharacterCode() == 66, "tcc");
-    assert(parseInt("-123") == -123, "tonum");
-    assert("fo"[1] == "o", "at");
-    assert("fo".length == 2, "count");
-    assert("fo".codeAt(17) == 0, "ct oor");
-}
 
 function testRefLocals() : void
 {

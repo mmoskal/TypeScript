@@ -248,6 +248,15 @@ interface String {
     [index: number]: string;
 }
 
+
+/**
+  * Converts A string to an integer.
+  * @param s A string to convert into a number.
+  */
+  // {shim:string::to_number}
+declare function parseInt(s: string): number;
+
+
 interface StringConstructor {
     new (value?: any): String;
     (value?: any): string;

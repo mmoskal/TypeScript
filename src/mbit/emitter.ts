@@ -464,6 +464,15 @@ namespace ts {
                         return emitIncrement(node, "number::add", false)
                     case SyntaxKind.MinusMinusToken:
                         return emitIncrement(node, "number::subtract", false)
+                    case SyntaxKind.MinusToken:
+                        emit(node.operand)
+                        proc.emit("pop {r0}")
+                        proc.emit("negs r0, r0")
+                        proc.emit("push {r0}")
+                        return                         
+                    case SyntaxKind.PlusToken:
+                        emit(node.operand)
+                        return // no-op
                     default: unhandled(node, "postfix unary number")
                 }
             }
@@ -1461,7 +1470,7 @@ namespace ts {
                     this.emitAdd((n >> 0) & 0xff)
                 }
                 if (isNeg) {
-                    this.emit("neg r0, r0")
+                    this.emit("negs r0, r0")
                 }
 
                 if (!keepInR0)
