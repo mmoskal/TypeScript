@@ -24,7 +24,7 @@ export function main() : void
     testStringCollection();
     testStringOps();
     showDigit(4);    
-    //testReccoll();
+    testReccoll();
     showDigit(5);
     /*
     testAction(1);
@@ -80,7 +80,7 @@ function assert(cond:boolean, msg_:string)
 {
     if (!cond) {
         msg("ASSERT: " + msg_);
-        panic(44);
+        panic(45);
     }
 }
 
@@ -98,9 +98,6 @@ function doStuff(x: number, x2: number) : number
     let x3 = x / x2;
     return x3;
 }
-
-/*
-*/
 
 /**
  * Stop the micro:bit program and display given error code.
@@ -240,8 +237,6 @@ function testStringOps() : void
     assert("fo".charCodeAt(17) == 0, "ct oor");
 }
 
-
-/*
 class Testrec
 {
     str: string;

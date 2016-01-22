@@ -40,12 +40,23 @@ namespace ts {
         helper?: string;
     }
 
+    interface ClassInfo {
+        reffields: PropertyDeclaration[];
+        primitivefields: PropertyDeclaration[];
+        allfields: PropertyDeclaration[];
+    }
+
     let lf = thumb.lf;
     let checker: TypeChecker;
 
 
     function isArrayType(t: Type) {
         return (t.flags & TypeFlags.Reference) && t.symbol.name == "Array"
+    }
+
+    function isClassType(t: Type) {
+        // check if we like the class?
+        return (t.flags & TypeFlags.Class)
     }
 
     function arrayElementType(t: Type): Type {
@@ -55,9 +66,10 @@ namespace ts {
     }
 
     function checkType(t: Type) {
-        let ok = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | TypeFlags.Void | TypeFlags.Enum
+        let ok = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | TypeFlags.Void | TypeFlags.Enum | TypeFlags.Null
         if ((t.flags & ok) == 0) {
             if (isArrayType(t)) return t;
+            if (isClassType(t)) return t;
             userError(lf("unsupported type: {0}", checker.typeToString(t)))
         }
         return t
@@ -75,6 +87,7 @@ namespace ts {
 
         const diagnostics = createDiagnosticCollection();
         checker = program.getTypeChecker();
+        let classInfos: thumb.StringMap<ClassInfo> = {}
 
         mbit.staticBytecodeInfo = require("./hexinfo.js");
         mbit.setup();
@@ -148,6 +161,30 @@ namespace ts {
             }
         }
 
+        function getClassInfo(t: Type) {
+            let decl = <ClassDeclaration>t.symbol.valueDeclaration
+            let id = getNodeId(decl)
+            let info = classInfos[id + ""]
+            if (!info) {
+                info = {
+                    reffields: [],
+                    primitivefields: [],
+                    allfields: null
+                }
+                classInfos[id + ""] = info;
+                for (let mem of decl.members) {
+                    if (mem.kind == SyntaxKind.PropertyDeclaration) {
+                        let pdecl = <PropertyDeclaration>mem
+                        if (isRefType(typeOf(pdecl)))
+                            info.reffields.push(pdecl)
+                        else info.primitivefields.push(pdecl)
+                    }
+                }
+                info.allfields = info.reffields.concat(info.primitivefields)
+            }
+            return info;
+        }
+
         function emitIdentifier(node: Identifier) {
             let decl = getDecl(node)
             if (decl && (decl.kind == SyntaxKind.VariableDeclaration || decl.kind == SyntaxKind.Parameter)) {
@@ -213,7 +250,11 @@ namespace ts {
             }
         }
         function emitObjectLiteral(node: ObjectLiteralExpression) { }
-        function emitPropertyAssignment(node: PropertyDeclaration) { }
+        function emitPropertyAssignment(node: PropertyDeclaration) {
+            if (node.initializer)
+                userError(lf("class field initializers not supported"))
+            // do nothing
+        }
         function emitShorthandPropertyAssignment(node: ShorthandPropertyAssignment) { }
         function emitComputedPropertyName(node: ComputedPropertyName) { }
         function emitPropertyAccess(node: PropertyAccessExpression) {
@@ -238,6 +279,11 @@ namespace ts {
                 } else {
                     unhandled(node, "no {shim:...}");
                 }
+            } else if (decl.kind == SyntaxKind.PropertyDeclaration) {
+                let idx = fieldIndex(node)
+                emit(node.expression)
+                proc.emitInt(idx)
+                proc.emitCall("bitvm::ldfld" + refSuff(node), 0) // internal unref
             } else {
                 unhandled(node, stringKind(decl));
             }
@@ -394,7 +440,21 @@ namespace ts {
             text = text || "inline"
             return "_" + text.replace(/[^\w]+/g, "_") + "_" + getNodeId(node)
         }
-        function emitNewExpression(node: NewExpression) { }
+        function emitNewExpression(node: NewExpression) {
+            let t = typeOf(node)
+            if (isArrayType(t)) {
+                Debug.fail();
+            } else if (isClassType(t)) {
+                if (node.arguments && node.arguments.length)
+                    userError(lf("constructor arguments not supported"));
+                let info = getClassInfo(t)
+                proc.emitInt(info.reffields.length)
+                proc.emitInt(info.allfields.length)
+                proc.emitCall("record::mk", 0)
+            } else {
+                unhandled(node)
+            }
+        }
         function emitTaggedTemplateExpression(node: TaggedTemplateExpression) { }
         function emitTypeAssertion(node: TypeAssertion) {
             emit(node.expression)
@@ -469,7 +529,7 @@ namespace ts {
                         proc.emit("pop {r0}")
                         proc.emit("negs r0, r0")
                         proc.emit("push {r0}")
-                        return                         
+                        return
                     case SyntaxKind.PlusToken:
                         emit(node.operand)
                         return // no-op
@@ -526,6 +586,24 @@ namespace ts {
             }
         }
 
+        function fieldIndex(pacc: PropertyAccessExpression) {
+            let tp = typeOf(pacc.expression)
+            if (isClassType(tp)) {
+                let info = getClassInfo(tp)
+                let fld = info.allfields.filter(f => (<Identifier>f.name).text == pacc.name.text)[0]
+                if (!fld)
+                    userError(lf("field {0} not found", pacc.name.text))
+                return info.allfields.indexOf(fld)
+            } else {
+                unhandled(pacc, "bad field access")
+            }
+        }
+
+        function refSuff(e: Expression) {
+            if (isRefType(typeOf(e))) return "Ref"
+            else return ""
+        }
+
         function emitStore(expr: Expression) {
             if (expr.kind == SyntaxKind.Identifier) {
                 let decl = getDecl(expr)
@@ -535,6 +613,17 @@ namespace ts {
                 } else {
                     unhandled(expr, "target identifier")
                 }
+            } else if (expr.kind == SyntaxKind.PropertyAccessExpression) {
+                let pacc = <PropertyAccessExpression>expr
+                let tp = typeOf(pacc.expression)
+                let idx = fieldIndex(pacc)
+                emit(pacc.expression)
+                proc.emit("pop {r0}")
+                proc.emit("pop {r1}")
+                proc.emit("push {r0}")
+                proc.emitInt(idx)
+                proc.emit("push {r1}")                
+                proc.emitCall("bitvm::stfld" + refSuff(expr), 0); // it does the decr itself, no mask
             } else {
                 unhandled(expr, "assignment target")
             }
@@ -625,11 +714,20 @@ namespace ts {
                     default:
                         unhandled(node.operatorToken, "numeric operator")
                 }
-
             }
 
-            unhandled(node.operatorToken)
+            switch (node.operatorToken.kind) {
+                case SyntaxKind.EqualsEqualsToken:
+                case SyntaxKind.EqualsEqualsEqualsToken:
+                    return shim("number::eq");
+                case SyntaxKind.ExclamationEqualsEqualsToken:
+                case SyntaxKind.ExclamationEqualsToken:
+                    return shim("number::neq");
+                default:
+                    unhandled(node.operatorToken, "generic operator")
+            }
         }
+
         function emitAsString(e: Expression) {
             emit(e)
             let tp = typeOf(e)
@@ -789,12 +887,19 @@ namespace ts {
             if (node.initializer) {
                 emit(node.initializer)
                 loc.emitStore(proc)
+                proc.stackEmpty();
             }
         }
         function emitClassExpression(node: ClassExpression) { }
-        function emitClassDeclaration(node: ClassDeclaration) { }
+        function emitClassDeclaration(node: ClassDeclaration) {
+            if (node.typeParameters)
+                userError(lf("generic classes not supported"))
+            if (node.heritageClauses)
+                userError(lf("inheritance not supported"))
+            node.members.forEach(emit)
+        }
         function emitInterfaceDeclaration(node: InterfaceDeclaration) {
-            // TODO?
+            // nothing
         }
         function emitEnumDeclaration(node: EnumDeclaration) { }
         function emitEnumMember(node: EnumMember) { }
@@ -896,6 +1001,13 @@ namespace ts {
                     return emitTypeAssertion(<TypeAssertion>node);
                 case SyntaxKind.ArrayLiteralExpression:
                     return emitArrayLiteral(<ArrayLiteralExpression>node);
+                case SyntaxKind.ClassDeclaration:
+                    return emitClassDeclaration(<ClassDeclaration>node);
+                case SyntaxKind.PropertyDeclaration:
+                case SyntaxKind.PropertyAssignment:
+                    return emitPropertyAssignment(<PropertyDeclaration>node);
+                case SyntaxKind.NewExpression:
+                    return emitNewExpression(<NewExpression>node);
                 default:
                     unhandled(node);
 
@@ -934,14 +1046,10 @@ namespace ts {
                     return emitBindingElement(<BindingElement>node);
                 case SyntaxKind.ObjectLiteralExpression:
                     return emitObjectLiteral(<ObjectLiteralExpression>node);
-                case SyntaxKind.PropertyAssignment:
-                    return emitPropertyAssignment(<PropertyDeclaration>node);
                 case SyntaxKind.ShorthandPropertyAssignment:
                     return emitShorthandPropertyAssignment(<ShorthandPropertyAssignment>node);
                 case SyntaxKind.ComputedPropertyName:
                     return emitComputedPropertyName(<ComputedPropertyName>node);
-                case SyntaxKind.NewExpression:
-                    return emitNewExpression(<NewExpression>node);
                 case SyntaxKind.TaggedTemplateExpression:
                     return emitTaggedTemplateExpression(<TaggedTemplateExpression>node);
                 case SyntaxKind.AsExpression:
@@ -984,8 +1092,6 @@ namespace ts {
                     return emitDebuggerStatement(node);
                 case SyntaxKind.ClassExpression:
                     return emitClassExpression(<ClassExpression>node);
-                case SyntaxKind.ClassDeclaration:
-                    return emitClassDeclaration(<ClassDeclaration>node);
                 case SyntaxKind.EnumMember:
                     return emitEnumMember(<EnumMember>node);
                 case SyntaxKind.ImportDeclaration:
