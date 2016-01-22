@@ -167,6 +167,8 @@ function incrBy_2() : void
 
 function testStrings() : void
 {
+    assert(42.toString() == "42", "42");
+
     let s = "live";
     assert(s == "live", "hello eq");
     s = s + "4OK";
@@ -192,18 +194,6 @@ function testStrings() : void
 }
 
 
-
-/*
-
-
-class Testrec
-{
-    str: string;
-    num: number;
-    bool: boolean;
-    str2: string;
-}
-
 function testNumCollection() : void
 {
     let coll = (<number[]>[]);
@@ -220,6 +210,18 @@ function testNumCollection() : void
         coll.push(i);
     }
     assert(coll.length == 100, "");
+}
+
+
+/*
+
+
+class Testrec
+{
+    str: string;
+    num: number;
+    bool: boolean;
+    str2: string;
 }
 
 function testStringCollection() : void
