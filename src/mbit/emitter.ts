@@ -233,6 +233,7 @@ namespace ts {
             const hex = bin.patchHex(false).join("\r\n") + "\r\n"
             fs.writeFileSync("microbit.asm", bin.csource) // optimized
             fs.writeFileSync("microbit.hex", hex)
+            fs.writeFileSync("microbit.js", bin.jssource)
             console.log("wrote microbit.hex and microbit.asm")
         }
 
@@ -1833,6 +1834,7 @@ namespace ts {
             globals: Location[] = [];
             buf: number[];
             csource = "";
+            jssource = "";
             finalPass = false;
 
             strings: StringMap<string> = {};
@@ -1971,6 +1973,7 @@ namespace ts {
                 // b.throwOnError = true;
                 b.emit(this.csource);
                 this.csource = b.getSource(!peepDbg);
+                this.jssource = b.js;
                 if (b.errors.length > 0) {
                     var userErrors = ""
                     b.errors.forEach(e => {

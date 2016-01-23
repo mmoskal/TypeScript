@@ -46,3 +46,4 @@ internal/
 !.vscode/tasks.json
 mbit/microbit.asm
 mbit/microbit.hex
+mbit/microbit.js

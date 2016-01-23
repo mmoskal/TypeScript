@@ -37,6 +37,7 @@ module ts.thumb {
         numArgs?: number[];
         error?: string;
         errorAt?: string;
+        labelName?: string;
     }
 
     export function lf(fmt: string, ...args: any[]) {
@@ -51,7 +52,7 @@ module ts.thumb {
         public friendlyFmt: string;
         public code: string;
 
-        constructor(format: string, public opcode: number, public mask: number) {
+        constructor(format: string, public opcode: number, public mask: number, public jsFormat: string) {
             ts.Debug.assert((opcode & mask) == opcode)
 
             this.code = format.replace(/\s+/g, " ");
@@ -67,6 +68,57 @@ module ts.thumb {
             this.args = words.slice(1)
         }
 
+        emitJs(ln: Line, asm: EmitResult) {
+            if (ln.noJs) return "// skip: " + ln.text
+            if (asm.error) return "** // asm error: " + ln.text
+            if (!this.jsFormat) return "** // no JS: " + ln.text
+            let s = this.jsFormat
+            let regs: string[] = null
+            let na = 0
+            this.args.forEach(formal => {
+                if (/^\$/.test(formal)) {
+                    let repl: string = null                
+                    let numArg = asm.numArgs[na++]
+                    let enc = encoders[formal]
+                    if (enc.isRegister)
+                        repl = "r" + numArg
+                    else if (enc.isImmediate)
+                        repl = numArg + ""
+                    else if (enc.isRegList) {
+                        repl = "$reglist"
+                        regs = []
+                        for (let j = 0; j < 16; ++j) {
+                            if (numArg & (1 << j)) {
+                                if (j == 15) regs.push("pc")
+                                else if (j == 14) regs.push("lr")
+                                else if (j == 13) regs.push("sp")
+                                else
+                                    regs.push("r" + j)
+                            }
+                        }
+                        Debug.assert(regs.length > 0)
+                        if (formal == "$rl1") { 
+                            regs.reverse() // pop
+                        } else if (formal == "$rl2") {
+                            // push
+                        } else {
+                            Debug.fail()
+                        }
+                    } else if (enc.isLabel) {
+                        repl = asm.labelName 
+                    } else {
+                        Debug.fail()
+                    }
+                    s = s.replace(formal, repl)
+                }
+            })
+            
+            if (regs)
+                s = regs.map(x => s.replace("$reglist", x)).join("\n")
+            
+            return s
+        }
+
         emit(ln: Line): EmitResult {
             var tokens = ln.words;
             if (tokens[0] != this.name) return badNameError;
@@ -74,6 +126,7 @@ module ts.thumb {
             var j = 1;
             var stack = 0;
             var numArgs: number[] = []
+            var labelName:string = null
 
             for (var i = 0; i < this.args.length; ++i) {
                 var formal = this.args[i]
@@ -117,7 +170,9 @@ module ts.thumb {
                         actual = actual.replace(/^#/, "")
                         if (/^[+-]?\d+$/.test(actual)) {
                             v = parseInt(actual, 10)
+                            labelName = "rel" + v
                         } else {
+                            labelName = actual
                             v = ln.bin.getRelativeLabel(actual)
                             if (v == null) {
                                 if (ln.bin.finalEmit)
@@ -155,6 +210,7 @@ module ts.thumb {
                 stack: stack,
                 opcode: r,
                 numArgs: numArgs,
+                labelName: labelName
             }
         }
 
@@ -176,6 +232,7 @@ module ts.thumb {
                 opcode2: (0xf800 | imm11),
                 stack: 0,
                 numArgs: [v],
+                labelName: actual
             }
         }
 
@@ -189,6 +246,7 @@ module ts.thumb {
         public lineNo: number;
         public words: string[];
         public scope: string;
+        public noJs: boolean;
 
         public instruction: Instruction;
         public numArgs: number[];
@@ -270,6 +328,7 @@ module ts.thumb {
         private scope = "";
         public errors: InlineError[] = [];
         public buf: number[];
+        public js: string;
         private labels: StringMap<number> = {};
         private stackpointers: StringMap<number> = {};
         private stack = 0;
@@ -585,6 +644,10 @@ module ts.thumb {
                     this.emitSpace(words);
                     break;
 
+                case "@js":
+                    this.js += l.text.replace(/^\s*@js/, "") + "\n"
+                    break;
+
                 // The usage for this is as follows:
                 // push {...}
                 // @stackmark locals   ; locals := sp
@@ -654,6 +717,9 @@ module ts.thumb {
                         this.emitShort(op.opcode2);
                     ln.instruction = ins[i];
                     ln.numArgs = op.numArgs;
+                    
+                    if (this.finalEmit)
+                        this.js += ins[i].emitJs(ln, op) + "\n"
                     return;
                 }
             }
@@ -711,6 +777,11 @@ module ts.thumb {
                     }
                 }
 
+                if (l.words[l.words.length - 1] == "@nojs") {
+                    l.words.pop()
+                    l.noJs = true
+                }
+
                 if (/^[\.@]/.test(l.words[0])) {
                     l.type = "directive";
                     if (l.words[0] == "@scope")
@@ -727,6 +798,7 @@ module ts.thumb {
         private iterLines() {
             this.stack = 0;
             this.buf = [];
+            this.js = "";
             this.lines.forEach(l => {
                 if (this.errors.length > 10)
                     return;
@@ -742,6 +814,7 @@ module ts.thumb {
                         if (curr == null)
                             ts.Debug.fail()
                         ts.Debug.assert(this.errors.length > 0 || curr == this.location())
+                        this.js += lblname + "\n"
                     } else {
                         if (this.labels.hasOwnProperty(lblname))
                             this.directiveError(lf("label redefinition"))
@@ -1034,8 +1107,8 @@ module ts.thumb {
         addEnc("$lb11", "LABEL", v => inrangeSigned(1023, v / 2, v >> 1))
 
         instructions = {}
-        var add = (name: string, code: number, mask: number) => {
-            var ins = new Instruction(name, code, mask)
+        var add = (name: string, code: number, mask: number, jsFormat?: string) => {
+            var ins = new Instruction(name, code, mask, jsFormat)
             if (!instructions.hasOwnProperty(ins.name))
                 instructions[ins.name] = [];
             instructions[ins.name].push(ins)
@@ -1044,13 +1117,13 @@ module ts.thumb {
         //add("nop",                   0xbf00, 0xffff);  // we use mov r8,r8 as gcc
 
         add("adcs  $r0, $r1", 0x4140, 0xffc0);
-        add("add   $r2, $r3", 0x4400, 0xff00);
+        add("add   $r2, $r3", 0x4400, 0xff00, "$r2 += $r3");
         add("add   $r5, pc, $i1", 0xa000, 0xf800);
         add("add   $r5, sp, $i1", 0xa800, 0xf800);
-        add("add   sp, $i2", 0xb000, 0xff80);
+        add("add   sp, $i2", 0xb000, 0xff80, "sp += $i2");
         add("adds  $r0, $r1, $i3", 0x1c00, 0xfe00);
         add("adds  $r0, $r1, $r4", 0x1800, 0xfe00);
-        add("adds  $r5, $i0", 0x3000, 0xf800);
+        add("adds  $r5, $i0", 0x3000, 0xf800, "$r5 += $i0");
         add("adr   $r5, $la", 0xa000, 0xf800);
         add("ands  $r0, $r1", 0x4000, 0xffc0);
         add("asrs  $r0, $r1", 0x4100, 0xffc0);
@@ -1066,32 +1139,32 @@ module ts.thumb {
         add("eors  $r0, $r1", 0x4040, 0xffc0);
         add("ldmia $r5!, $rl0", 0xc800, 0xf800);
         add("ldmia $r5, $rl0", 0xc800, 0xf800);
-        add("ldr   $r0, [$r1, $i5]", 0x6800, 0xf800);
-        add("ldr   $r0, [$r1, $r4]", 0x5800, 0xfe00);
+        add("ldr   $r0, [$r1, $i5]", 0x6800, 0xf800, "$r0 = mem[$r1 + $i5]");
+        add("ldr   $r0, [$r1, $r4]", 0x5800, 0xfe00, "$r0 = mem[$r1 + $r4]");
         add("ldr   $r5, [pc, $i1]", 0x4800, 0xf800);
         //add("ldr   $r5, $la",        0x4800, 0xf800);
-        add("ldr   $r5, [sp, $i1]", 0x9800, 0xf800);
+        add("ldr   $r5, [sp, $i1]", 0x9800, 0xf800, "$r5 = mem[sp + $i1]");
         add("ldrb  $r0, [$r1, $i4]", 0x7800, 0xf800);
         add("ldrb  $r0, [$r1, $r4]", 0x5c00, 0xfe00);
         add("ldrh  $r0, [$r1, $i7]", 0x8800, 0xf800);
         add("ldrh  $r0, [$r1, $r4]", 0x5a00, 0xfe00);
         add("ldrsb $r0, [$r1, $r4]", 0x5600, 0xfe00);
         add("ldrsh $r0, [$r1, $r4]", 0x5e00, 0xfe00);
-        add("lsls  $r0, $r1", 0x4080, 0xffc0);
-        add("lsls  $r0, $r1, $i4", 0x0000, 0xf800);
+        add("lsls  $r0, $r1", 0x4080, 0xffc0, "$r0 = $r0 <<< $r1");
+        add("lsls  $r0, $r1, $i4", 0x0000, 0xf800, "$r0 = $r1 <<< $i4");
         add("lsrs  $r0, $r1", 0x40c0, 0xffc0);
         add("lsrs  $r0, $r1, $i6", 0x0800, 0xf800);
-        add("mov   $r0, $r1", 0x4600, 0xffc0);
+        add("mov   $r0, $r1", 0x4600, 0xffc0, "$r0 = $r1");
         //add("mov   $r2, $r3",        0x4600, 0xff00);
-        add("movs  $r0, $r1", 0x0000, 0xffc0);
-        add("movs  $r5, $i0", 0x2000, 0xf800);
+        add("movs  $r0, $r1", 0x0000, 0xffc0, "$r0 = $r1");
+        add("movs  $r5, $i0", 0x2000, 0xf800, "$r5 = $i0");
         add("muls  $r0, $r1", 0x4340, 0xffc0);
         add("mvns  $r0, $r1", 0x43c0, 0xffc0);
-        add("negs  $r0, $r1", 0x4240, 0xffc0);
-        add("nop", 0x46c0, 0xffff); // mov r8, r8
+        add("negs  $r0, $r1", 0x4240, 0xffc0, "$r0 = -$r1");
+        add("nop", 0x46c0, 0xffff, "$r8 = $r8"); // mov r8, r8
         add("orrs  $r0, $r1", 0x4300, 0xffc0);
-        add("pop   $rl2", 0xbc00, 0xfe00);
-        add("push  $rl1", 0xb400, 0xfe00);
+        add("pop   $rl2", 0xbc00, 0xfe00, "$rl2 = mem[sp]; sp += 4");
+        add("push  $rl1", 0xb400, 0xfe00, "sp -= 4; mem[sp] = $rl1");
         add("rev   $r0, $r1", 0xba00, 0xffc0);
         add("rev16 $r0, $r1", 0xba40, 0xffc0);
         add("revsh $r0, $r1", 0xbac0, 0xffc0);
@@ -1099,9 +1172,9 @@ module ts.thumb {
         add("sbcs  $r0, $r1", 0x4180, 0xffc0);
         add("sev", 0xbf40, 0xffff);
         add("stmia $r5!, $rl0", 0xc000, 0xf800);
-        add("str   $r0, [$r1, $i5]", 0x6000, 0xf800);
-        add("str   $r0, [$r1, $r4]", 0x5000, 0xfe00);
-        add("str   $r5, [sp, $i1]", 0x9000, 0xf800);
+        add("str   $r0, [$r1, $i5]", 0x6000, 0xf800, "mem[$r1 + $i5] = $r0");
+        add("str   $r0, [$r1, $r4]", 0x5000, 0xfe00, "mem[$r1 + $r4] = $r0");
+        add("str   $r5, [sp, $i1]", 0x9000, 0xf800, "mem[sp + $i1] = $r5");
         add("strb  $r0, [$r1, $i4]", 0x7000, 0xf800);
         add("strb  $r0, [$r1, $r4]", 0x5400, 0xfe00);
         add("strh  $r0, [$r1, $i7]", 0x8000, 0xf800);
@@ -1141,13 +1214,13 @@ module ts.thumb {
         add("bhs   $lb", 0xd200, 0xff00); // cs
         add("blo   $lb", 0xd300, 0xff00); // cc
 
-        add("b     $lb11", 0xe000, 0xf800);
+        add("b     $lb11", 0xe000, 0xf800, "b($lb11)");
         add("bal   $lb11", 0xe000, 0xf800);
 
         // handled specially - 32 bit instruction
-        add("bl    $lb", 0xf000, 0xf800);
+        add("bl    $lb", 0xf000, 0xf800, "bl($lb)");
         // this is normally emitted as 'b' but will be emitted as 'bl' if needed
-        add("bb    $lb", 0xe000, 0xf800);
+        add("bb    $lb", 0xe000, 0xf800, "b($lb)");
     }
 
     function parseString(s: string) {
