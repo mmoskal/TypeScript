@@ -40,7 +40,9 @@ namespace ts {
             node = node.parent
             if (!node)
                 userError(lf("cannot determine parent of {0}", stringKind(node0)))
-            if (node.kind == SyntaxKind.FunctionDeclaration) return <FunctionDeclaration>node
+            if (node.kind == SyntaxKind.FunctionDeclaration ||
+            node.kind == SyntaxKind.ArrowFunction ||
+            node.kind == SyntaxKind.FunctionExpression) return <FunctionLikeDeclaration>node
             if (node.kind == SyntaxKind.SourceFile) return null
         }
     }
@@ -197,6 +199,7 @@ namespace ts {
             if (outer == null || outer == proc.action) {
                 // not captured
             } else {
+                debugger;
                 if (proc.info.capturedVars.indexOf(v) < 0)
                     proc.info.capturedVars.push(v);
                 info.captured = true;
@@ -479,9 +482,7 @@ namespace ts {
                     proc.emit("add sp, #4*" + args.length)
                 if (hasRet)
                     proc.emit("push {r0}");
-
             }
-
 
             if (decl && decl.kind == SyntaxKind.FunctionDeclaration) {
                 if (attrs.shim) {
@@ -515,6 +516,23 @@ namespace ts {
                 }
 
                 unhandled(node, "non-shim method call");
+            }
+
+            if (decl && (decl.kind == SyntaxKind.VariableDeclaration || decl.kind == SyntaxKind.Parameter)) {
+                if (args.length > 1)
+                    userError("lambda functions with more than 1 argument not supported")
+
+                if (hasRet)
+                    userError("lambda functions cannot yet return values")
+
+                let suff = args.length + ""
+                if (suff == "0") suff = ""
+
+                args.unshift(node.expression)
+                args.forEach(emit)
+
+                proc.emitCall("action::run" + suff, getMask(args));
+                return
             }
 
             unhandled(node, stringKind(decl))
@@ -572,7 +590,10 @@ namespace ts {
                 proc.emitCall("action::mk", 0)
                 caps.forEach((l, i) => {
                     proc.emitInt(i)
-                    proc.localIndex(l).emitLoad(proc, true) // direct load
+                    let loc = proc.localIndex(l)
+                    if (!loc)
+                        userError("cannot find captured value: " + checker.symbolToString(l.symbol))
+                    loc.emitLoad(proc, true) // direct load
                     proc.emitCall("bitvm::stclo", 0)
                     // already done by emitCall
                     // proc.emit("push {r0}");
@@ -597,6 +618,13 @@ namespace ts {
                     proc.emit("@stackmark inlfunc");
                     proc.emit("push {r5, lr}");
                     proc.emit("mov r5, r1");
+
+                    node.parameters.forEach((p, i) => {
+                        if (i >= 2)
+                            userError(lf("only up to two parameters supported in lambdas"))
+                        proc.emit(`push {r${i + 2}}`)
+                    })
+                    proc.emit("@stackmark args");
                 } else {
                     proc.emit("@stackmark func");
                     proc.emit("@stackmark args");
@@ -618,20 +646,24 @@ namespace ts {
 
                 if (proc.hasReturn()) {
                     proc.emit("push {r0}");
-                    proc.emitClrs(null, true);
+                    proc.emitClrs();
                     proc.emit("pop {r0}");
                 } else {
-                    proc.emitClrs(null, true);
+                    proc.emitClrs();
                 }
 
                 proc.popLocals();
 
                 if (isLambda) {
+                    proc.emit("@stackempty args")
+                    if (node.parameters.length)
+                        proc.emit("add sp, #4*" + node.parameters.length + " ; pop args")
                     proc.emit("pop {r5, pc}");
                     proc.emit("@stackempty inlfunc");
                 } else {
                     proc.emit("pop {pc}");
                     proc.emit("@stackempty func");
+                    proc.emit("@stackempty args")
                 }
             })
         }
@@ -1559,13 +1591,10 @@ namespace ts {
                     (noargs ? null : this.args.filter(n => n.def == l)[0])
             }
 
-            emitClrs(omit: Declaration, inclArgs = false) {
-                var lst = this.locals
-                if (inclArgs)
-                    lst = lst.concat(this.args)
+            emitClrs() {
+                var lst = this.locals.concat(this.args)
                 lst.forEach(p => {
-                    if (p.def != omit)
-                        p.emitClrIfRef(this)
+                    p.emitClrIfRef(this)
                 })
             }
 

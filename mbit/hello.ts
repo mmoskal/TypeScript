@@ -26,11 +26,12 @@ export function main(): void {
     testReccoll();
     showDigit(5);
     inBg();
-    /*
     testAction(1);
     showDigit(6);
     testAction(7);
-    testActionSave();
+    testIter();
+    testActionSave();    
+    /*
     msg("start mem test");
     testMemoryFree();
     msg("start 2nd mem test");
@@ -266,18 +267,26 @@ function inBg() {
     assert(rec.str == "foo", "inbg1")
 }
 
-/*
-
-
-function runTwice(fn:Action) : void
-{
+function runTwice(fn: Action): void {
     msg("r2 start");
     fn();
     fn();
 }
 
-function testAction(p: number) : void
-{
+function iter(max: number, fn: (v: number) => void) {
+    for (var i = 0; i < max; ++i)
+        fn(i);
+}
+
+function testIter() {
+    x = 0
+    iter(10, v => {
+        x = x + (v + 1)
+    })
+    assert(x == 55, "55")
+}
+
+function testAction(p: number): void {
     let s = "hello" + "1";
     let coll = (<number[]>[]);
     let p2 = p * 2;
@@ -291,13 +300,11 @@ function testAction(p: number) : void
     assert(coll.length == 2, "run2");
 }
 
-function saveAction(fn:Action) : void
-{
+function saveAction(fn: Action): void {
     action = fn;
 }
 
-function saveGlobalAction() : void
-{
+function saveGlobalAction(): void {
     let s = "foo" + "42";
     tot = "";
     saveAction(() => {
@@ -305,8 +312,7 @@ function saveGlobalAction() : void
     });
 }
 
-function testActionSave() : void
-{
+function testActionSave(): void {
     saveGlobalAction();
     runTwice(action);
     msg(tot);
@@ -315,6 +321,7 @@ function testActionSave() : void
     action = (<Action>null);
 }
 
+/*
 
 function testRefLocals() : void
 {
