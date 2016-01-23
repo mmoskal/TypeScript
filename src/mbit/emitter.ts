@@ -41,8 +41,8 @@ namespace ts {
             if (!node)
                 userError(lf("cannot determine parent of {0}", stringKind(node0)))
             if (node.kind == SyntaxKind.FunctionDeclaration ||
-            node.kind == SyntaxKind.ArrowFunction ||
-            node.kind == SyntaxKind.FunctionExpression) return <FunctionLikeDeclaration>node
+                node.kind == SyntaxKind.ArrowFunction ||
+                node.kind == SyntaxKind.FunctionExpression) return <FunctionLikeDeclaration>node
             if (node.kind == SyntaxKind.SourceFile) return null
         }
     }
@@ -806,6 +806,22 @@ namespace ts {
             emitStore(node.left)
         }
 
+        function emitLazyBinaryExpression(node: BinaryExpression) {
+            let lbl = proc.mkLabel("lazy")
+            emit(node.left);
+            if (node.operatorToken.kind == SyntaxKind.BarBarToken) {
+                proc.emitJmp(lbl, "JMPNZ")
+            } else if (node.operatorToken.kind == SyntaxKind.AmpersandAmpersandToken) {
+                proc.emitJmp(lbl, "JMPZ")
+            } else {
+                Debug.fail()
+            }
+            emit(node.right)
+            proc.emit("pop {r0}")
+            proc.emitLbl(lbl)
+            proc.emit("push {r0}")
+        }
+
         function emitBinaryExpression(node: BinaryExpression) {
             if (node.operatorToken.kind == SyntaxKind.EqualsToken) {
                 handleAssignment(node);
@@ -887,6 +903,9 @@ namespace ts {
                 case SyntaxKind.ExclamationEqualsEqualsToken:
                 case SyntaxKind.ExclamationEqualsToken:
                     return shim("number::neq");
+                case SyntaxKind.BarBarToken:
+                case SyntaxKind.AmpersandAmpersandToken:
+                    return emitLazyBinaryExpression(node);
                 default:
                     unhandled(node.operatorToken, "generic operator")
             }

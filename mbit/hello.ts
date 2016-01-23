@@ -10,7 +10,6 @@ var sum: number;
 export function main(): void {
     console.log("Starting...")
 
-    //testLazyOps();
 
     //lib.print_17(3);
     showDigit(0);
@@ -30,7 +29,9 @@ export function main(): void {
     showDigit(6);
     testAction(7);
     testIter();
-    testActionSave();    
+    testActionSave();
+    testLazyOps();
+
     /*
     msg("start mem test");
     testMemoryFree();
@@ -321,31 +322,7 @@ function testActionSave(): void {
     action = (<Action>null);
 }
 
-/*
-
-function testRefLocals() : void
-{
-    msg("start test ref locals");
-    let s = "";
-    // For 4 or more it runs out of memory
-    for (let i = 0; i < 3; i++) {
-        msg(i);
-        let copy = i;
-        control.inBackground(() => {
-            basic.pause(10 * i);
-            copy = copy + 10;
-        });
-        control.inBackground(() => {
-            basic.pause(20 * i);
-            s = s + copy;
-        });
-    }
-    basic.pause(200);
-    assert(s == "101112", "reflocals");
-}
-
-function testLazyOps() : void
-{
+function testLazyOps(): void {
     lazyAcc = 0;
     if (incrLazyAcc(10, false) && incrLazyAcc(1, true)) {
         assert(false, "");
@@ -404,10 +381,33 @@ function testLazyOps() : void
     }
 }
 
-function incrLazyAcc(delta: number, res: boolean) : boolean
-{
+function incrLazyAcc(delta: number, res: boolean): boolean {
     lazyAcc = lazyAcc + delta;
     return res;
+}
+
+
+/*
+
+function testRefLocals() : void
+{
+    msg("start test ref locals");
+    let s = "";
+    // For 4 or more it runs out of memory
+    for (let i = 0; i < 3; i++) {
+        msg(i);
+        let copy = i;
+        control.inBackground(() => {
+            basic.pause(10 * i);
+            copy = copy + 10;
+        });
+        control.inBackground(() => {
+            basic.pause(20 * i);
+            s = s + copy;
+        });
+    }
+    basic.pause(200);
+    assert(s == "101112", "reflocals");
 }
 
 function testMemoryFree() : void
