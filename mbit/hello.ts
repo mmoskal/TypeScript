@@ -7,12 +7,11 @@ var lazyAcc: number;
 var sum: number;
 
 
-export function main() : void
-{
+export function main(): void {
     console.log("Starting...")
-    
+
     //testLazyOps();
-    
+
     //lib.print_17(3);
     showDigit(0);
     //assert(lib3.getX() == 17 * 3, "");
@@ -23,7 +22,7 @@ export function main() : void
     showDigit(2);
     testStringCollection();
     testStringOps();
-    showDigit(4);    
+    showDigit(4);
     testReccoll();
     showDigit(5);
     inBg();
@@ -51,8 +50,7 @@ export function main() : void
     showDigit(1);
 }
 
-function testNums() : void
-{
+function testNums(): void {
     let x = 40 + 2;
     assert(x == 42, "add");
     x = 40 / 2;
@@ -77,16 +75,14 @@ function testNums() : void
 
 
 
-function assert(cond:boolean, msg_:string)
-{
+function assert(cond: boolean, msg_: string) {
     if (!cond) {
         msg("ASSERT: " + msg_);
         panic(45);
     }
 }
 
-function fib(p: number) : number
-{
+function fib(p: number): number {
     if (p <= 2) {
         return p;
     }
@@ -94,8 +90,7 @@ function fib(p: number) : number
     return fib(p2) + fib(p - 2);
 }
 
-function doStuff(x: number, x2: number) : number
-{
+function doStuff(x: number, x2: number): number {
     let x3 = x / x2;
     return x3;
 }
@@ -104,31 +99,27 @@ function doStuff(x: number, x2: number) : number
  * Stop the micro:bit program and display given error code.
  * {shim:uBit.panic}
  */
-function panic(code2: number) : void
-{
+function panic(code2: number): void {
 }
 
 /**
  * Show the number
  * {shim:micro_bit::showDigit}
  */
-function showDigit(code2: number) : void
-{
+function showDigit(code2: number): void {
 }
 
 /**
  * Print message
  */
-function msg(s: string) : void
-{
+function msg(s: string): void {
     console.log(s)
     basic.pause(50);
 }
 
-function testIf() : void
-{
+function testIf(): void {
     let b = false;
-    if ( ! b) {
+    if (!b) {
         glb1 = 7;
     }
     else {
@@ -148,18 +139,15 @@ function testIf() : void
  * {shim:TD_ID}
  * {enum:s:one=1,two=2,three=3}
  */
-function tdid(s: string) : number
-{
+function tdid(s: string): number {
     return 0;
 }
 
-function incrBy_2() : void
-{
+function incrBy_2(): void {
     glb1 = glb1 + 2;
 }
 
-function testStrings() : void
-{
+function testStrings(): void {
     assert((42).toString() == "42", "42");
 
     let s = "live";
@@ -187,9 +175,8 @@ function testStrings() : void
 }
 
 
-function testNumCollection() : void
-{
-    let coll:number[] = [];
+function testNumCollection(): void {
+    let coll: number[] = [];
     assert(coll.length == 0, "");
     coll.push(42);
     assert(coll.length == 1, "");
@@ -211,8 +198,7 @@ function testNumCollection() : void
     assert(coll[2] == 3, "cons2");
 }
 
-function testStringCollection() : void
-{
+function testStringCollection(): void {
     let coll = (<string[]>[]);
     coll.push("foobar");
     coll.push((12).toString());
@@ -220,15 +206,14 @@ function testStringCollection() : void
     assert(coll.indexOf("12", 0) == 1, "idx");
     coll = [
         "a" + "b",
-        coll[2],        
+        coll[2],
     ]
     assert(coll[0] == "ab", "")
     assert(coll[1] == "foobarxx", "")
     assert(coll.length == 2, "")
 }
 
-function testStringOps() : void
-{
+function testStringOps(): void {
     assert("foo".concat("bar") == "foobar", "concat");
     assert("xAb".charCodeAt(1) == 65, "code at");
     assert("B".charCodeAt(0) == 66, "tcc");
@@ -238,16 +223,14 @@ function testStringOps() : void
     assert("fo".charCodeAt(17) == 0, "ct oor");
 }
 
-class Testrec
-{
+class Testrec {
     str: string;
     num: number;
     bool: boolean;
     str2: string;
 }
 
-function testRec0() : Testrec
-{
+function testRec0(): Testrec {
     let testrec = new Testrec();
     testrec.str2 = "Hello" + " world";
     testrec.str = testrec.str2;
@@ -262,19 +245,17 @@ function testRec0() : Testrec
     return testrec;
 }
 
-function testReccoll() : void
-{
-    let coll:Testrec[] = [];
+function testReccoll(): void {
+    let coll: Testrec[] = [];
     let item = testRec0();
     msg("in reccoll");
     coll.push(item);
 }
 
-function inBg()
-{    
+function inBg() {
     let k = 7
     let q = 14
-    let rec = new Testrec();    
+    let rec = new Testrec();
     glb1 = 0
     control.inBackground(() => {
         glb1 = glb1 + 10 + (q - k)
