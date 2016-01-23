@@ -188,11 +188,16 @@ namespace ts {
             return info
         }
 
-        function recordUse(v: VarOrParam, written = false) {
+        function getVarInfo(v: Declaration) {
             let key = getNodeId(v) + ""
             let info = variableStatus[key]
             if (!info)
                 variableStatus[key] = info = {}
+            return info;
+        }
+
+        function recordUse(v: VarOrParam, written = false) {
+            let info = getVarInfo(v)
             if (written)
                 info.written = true;
             let outer = getEnclosingFunction(v)
@@ -232,7 +237,7 @@ namespace ts {
             if (isGlobalVar(decl)) {
                 let ex = bin.globals.filter(l => l.def == decl)[0]
                 if (!ex) {
-                    ex = new mbit.Location(bin.globals.length, decl)
+                    ex = new mbit.Location(bin.globals.length, decl, getVarInfo(decl))
                     bin.globals.push(ex)
                 }
                 return ex
@@ -242,7 +247,7 @@ namespace ts {
                     if (bin.finalPass)
                         userError(lf("cannot locate identifer"))
                     else
-                        res = proc.mkLocal(decl)
+                        res = proc.mkLocal(decl, getVarInfo(decl))
                 }
                 return res
             }
@@ -576,7 +581,7 @@ namespace ts {
             let prim = info.capturedVars.filter(v => !isRefDecl(v))
             let caps = refs.concat(prim)
             let locals = caps.map((v, i) => {
-                let l = new mbit.Location(i, v)
+                let l = new mbit.Location(i, v, getVarInfo(v))
                 l.iscap = true
                 return l;
             })
@@ -634,7 +639,7 @@ namespace ts {
                 proc.pushLocals();
 
                 proc.args = node.parameters.map((p, i) => {
-                    let l = new mbit.Location(i, p)
+                    let l = new mbit.Location(i, p, getVarInfo(p))
                     l.isarg = true
                     return l
                 })
@@ -1066,7 +1071,7 @@ namespace ts {
         function emitCatchClause(node: CatchClause) { }
         function emitDebuggerStatement(node: Node) { }
         function emitVariableDeclaration(node: VariableDeclaration) {
-            let loc = proc.mkLocal(node)
+            let loc = proc.mkLocal(node, getVarInfo(node))
             if (node.initializer) {
                 emit(node.initializer)
                 loc.emitStore(proc)
@@ -1447,7 +1452,7 @@ namespace ts {
             isarg = false;
             iscap = false;
 
-            constructor(public index: number, public def: Declaration = null) {
+            constructor(public index: number, public def: Declaration, public info: VariableInfo) {
             }
 
             toString() {
@@ -1597,8 +1602,8 @@ namespace ts {
                 return text || "inline"
             }
 
-            mkLocal(def: Declaration = null) {
-                var l = new Location(this.locals.length, def)
+            mkLocal(def: Declaration, info: VariableInfo) {
+                var l = new Location(this.locals.length, def, info)
                 //if (def) console.log("LOCAL: " + def.getName() + ": ref=" + def.isByRef() + " cap=" + def._isCaptured + " mut=" + def._isMutable)
                 this.locals.push(l)
                 return l
