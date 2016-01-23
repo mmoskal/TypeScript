@@ -31,6 +31,7 @@ export function main(): void {
     testIter();
     testActionSave();
     testLazyOps();
+    testRefLocals();
 
     /*
     msg("start mem test");
@@ -42,7 +43,6 @@ export function main(): void {
     let x = enumAdd2("size", 0);
     assert(x == 10, "enum2");
     assert(enumAdd2("pi", 0) == 3, "enum3");
-    testRefLocals();
     assert(tdid("two") == 2, "tdid");
     showDigit(9);
     testByRefParams();
@@ -387,15 +387,12 @@ function incrLazyAcc(delta: number, res: boolean): boolean {
 }
 
 
-/*
-
-function testRefLocals() : void
-{
+function testRefLocals(): void {
     msg("start test ref locals");
     let s = "";
     // For 4 or more it runs out of memory
     for (let i = 0; i < 3; i++) {
-        msg(i);
+        msg(i + "");
         let copy = i;
         control.inBackground(() => {
             basic.pause(10 * i);
@@ -409,6 +406,9 @@ function testRefLocals() : void
     basic.pause(200);
     assert(s == "101112", "reflocals");
 }
+
+/*
+
 
 function testMemoryFree() : void
 {

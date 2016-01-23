@@ -204,7 +204,6 @@ namespace ts {
             if (outer == null || outer == proc.action) {
                 // not captured
             } else {
-                debugger;
                 if (proc.info.capturedVars.indexOf(v) < 0)
                     proc.info.capturedVars.push(v);
                 info.captured = true;
@@ -282,7 +281,7 @@ namespace ts {
             if (decl && (decl.kind == SyntaxKind.VariableDeclaration || decl.kind == SyntaxKind.Parameter)) {
                 let l = lookupLocation(decl)
                 recordUse(<VarOrParam>decl)
-                l.emitLoad(proc);
+                l.emitLoadByRef(proc)
             } else {
                 unhandled(node, "id")
             }
@@ -778,7 +777,8 @@ namespace ts {
                 let decl = getDecl(expr)
                 if (decl && (decl.kind == SyntaxKind.VariableDeclaration || decl.kind == SyntaxKind.Parameter)) {
                     let l = lookupLocation(decl)
-                    l.emitStore(proc)
+                    recordUse(<VarOrParam>decl, true)
+                    l.emitStoreByRef(proc)
                 } else {
                     unhandled(expr, "target identifier")
                 }
@@ -1072,9 +1072,14 @@ namespace ts {
         function emitDebuggerStatement(node: Node) { }
         function emitVariableDeclaration(node: VariableDeclaration) {
             let loc = proc.mkLocal(node, getVarInfo(node))
+            if (loc.isByRefLocal()) {
+                loc.emitClrIfRef(proc) // we might be in a loop
+                proc.emitCallRaw("bitvm::mkloc" + loc.refSuff())
+                loc.emitStoreCore(proc)
+            }
             if (node.initializer) {
                 emit(node.initializer)
-                loc.emitStore(proc)
+                loc.emitStoreByRef(proc)
                 proc.stackEmpty();
             }
         }
@@ -1481,15 +1486,11 @@ namespace ts {
                 else return ""
             }
 
-
             isByRefLocal() {
-                //return this.def instanceof LocalDef && (<LocalDef>this.def).isByRef()
-                return false //TODO
+                return this.isLocal() && this.info.captured && this.info.written
             }
 
             emitStoreByRef(proc: Procedure) {
-                Debug.assert(this.isLocal())
-
                 if (this.isByRefLocal()) {
                     this.emitLoadLocal(proc);
                     proc.emit("pop {r1}");
@@ -1517,8 +1518,10 @@ namespace ts {
             }
 
             emitStore(proc: Procedure) {
-                if (this.iscap)
+                if (this.iscap && proc.binary.finalPass) {
+                    debugger
                     Debug.fail("store for captured")
+                }
 
                 if (this.isGlobal()) {
                     proc.emitInt(this.index)
@@ -1565,7 +1568,6 @@ namespace ts {
             }
 
             emitClrIfRef(proc: Procedure) {
-                // Debug.assert(!this.isarg)
                 Debug.assert(!this.isGlobal() && !this.iscap)
                 if (this.isRef() || this.isByRefLocal()) {
                     this.emitLoadCore(proc);
@@ -1586,6 +1588,7 @@ namespace ts {
             locals: Location[] = [];
             captured: Location[] = [];
             args: Location[] = [];
+            binary: Binary;
 
             hasReturn() {
                 let sig = checker.getSignatureFromDeclaration(this.action)
@@ -1872,6 +1875,7 @@ namespace ts {
             addProc(proc: Procedure) {
                 this.procs.push(proc)
                 proc.seqNo = this.procs.length
+                proc.binary = this
             }
 
 
