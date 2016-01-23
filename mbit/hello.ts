@@ -32,6 +32,7 @@ export function main(): void {
     testActionSave();
     testLazyOps();
     testRefLocals();
+    testByRefParams();
 
     /*
     msg("start mem test");
@@ -45,7 +46,6 @@ export function main(): void {
     assert(enumAdd2("pi", 0) == 3, "enum3");
     assert(tdid("two") == 2, "tdid");
     showDigit(9);
-    testByRefParams();
     //TD.basic.showLeds("0 1 0 1 0\n0 0 0 0 0\n0 0 1 0 0\n1 0 0 0 1\n0 1 1 1 0", 400);
     */
 
@@ -407,6 +407,66 @@ function testRefLocals(): void {
     assert(s == "101112", "reflocals");
 }
 
+function byRefParam_0(p: number): void {
+    control.inBackground(() => {
+        basic.pause(1);
+        sum = sum + p;
+    });
+    p = p + 1;
+}
+
+function byRefParam_2(pxx: number): void {
+    pxx = pxx + 1;
+    control.inBackground(() => {
+        basic.pause(1);
+        sum = sum + pxx;
+    });
+}
+
+function testByRefParams(): void {
+    console.log("A0")
+    refparamWrite("a" + "b");
+    console.log("A1")
+    refparamWrite2(new Testrec());
+    console.log("A2")
+    refparamWrite3(new Testrec());
+    console.log("A3")
+    sum = 0;
+    let x = 1;
+    control.inBackground(() => {
+        basic.pause(1);
+        sum = sum + x;
+    });
+    x = 2;
+    byRefParam_0(4);
+    byRefParam_2(10);
+    basic.pause(30);
+    assert(sum == 18, "by ref");
+}
+
+function refparamWrite(s: string): void {
+    s = s + "c";
+    assert(s == "abc", "abc");
+}
+
+function refparamWrite2(testrec: Testrec): void {
+    testrec = new Testrec();
+    assert(testrec.bool == false, "");
+}
+
+function refparamWrite3(testrec: Testrec): void {
+    control.inBackground(() => {
+        basic.pause(1);
+        assert(testrec.str == "foo", "ff");
+        testrec.str = testrec.str + "x";
+    });
+    testrec = new Testrec();
+    testrec.str = "foo";
+    basic.pause(30);
+    assert(testrec.str == "foox", "ff");
+}
+
+
 /*
 
 
@@ -435,68 +495,5 @@ function allocImage() : void
 {
     // let img = image.createImage("0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1\n0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0\n0 0 1 1 0 0 0 1 1 0 0 0 1 1 0 0 0 1 1 0\n0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0\n0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
 }
-
-function byRefParam_0(p: number) : void
-{
-    control.inBackground(() => {
-        basic.pause(1);
-        sum = sum + p;
-    });
-    p = p + 1;
-}
-
-function byRefParam_2(pxx: number) : void
-{
-    pxx = pxx + 1;
-    control.inBackground(() => {
-        basic.pause(1);
-        sum = sum + pxx;
-    });
-}
-
-function testByRefParams() : void
-{
-    refparamWrite("a" + "b");
-    refparamWrite2(new Testrec());
-    refparamWrite3(new Testrec());
-    sum = 0;
-    let x = 1;
-    control.inBackground(() => {
-        basic.pause(1);
-        sum = sum + x;
-    });
-    x = 2;
-    byRefParam_0(4);
-    byRefParam_2(10);
-    basic.pause(30);
-    assert(sum == 18, "by ref");
-}
-
-function refparamWrite(s: string) : void
-{
-    let s2 = s + "c";
-    assert(s2 == "abc", "abc");
-}
-
-function refparamWrite2(testrec: Testrec) : void
-{
-    testrec = new Testrec();
-    assert(testrec.bool == false, "");
-}
-
-function refparamWrite3(testrec: Testrec) : void
-{
-    control.inBackground(() => {
-        basic.pause(1);
-        assert(testrec.str == "foo", "ff");
-        testrec.str = testrec.str + "x";
-    });
-    testrec = new Testrec();
-    testrec.str = "foo";
-    basic.pause(30);
-    assert(testrec.str == "foox", "ff");
-}
-
-
 
 */

@@ -55,6 +55,10 @@ namespace ts {
         return d.kind == SyntaxKind.VariableDeclaration && !isGlobalVar(d);
     }
 
+    function isParameter(d: Declaration) {
+        return d.kind == SyntaxKind.Parameter
+    }
+
     interface CommentAttrs {
         shim?: string;
         enumval?: string;
@@ -636,11 +640,26 @@ namespace ts {
                 }
 
                 proc.pushLocals();
-
+                
                 proc.args = node.parameters.map((p, i) => {
                     let l = new mbit.Location(i, p, getVarInfo(p))
                     l.isarg = true
                     return l
+                })
+                
+                proc.args.forEach(l => {
+                    if (l.isByRefLocal()) {
+                        // TODO add C++ support function to do this
+                        proc.emitCallRaw("bitvm::mkloc" + l.refSuff())
+                        proc.emit("push {r0}")
+                        proc.emitCallRaw("bitvm::incr")
+                        l.emitLoadCore(proc)
+                        proc.emit("mov r1, r0")
+                        proc.emit("ldr r0, [sp, #0]")
+                        proc.emitCallRaw("bitvm::stloc" + l.refSuff()); // unref internal
+                        proc.emit("pop {r0}")
+                        l.emitStoreCore(proc)
+                    }                    
                 })
 
                 emit(node.body);
@@ -783,6 +802,7 @@ namespace ts {
                     unhandled(expr, "target identifier")
                 }
             } else if (expr.kind == SyntaxKind.PropertyAccessExpression) {
+                // TODO add C++ support function to simplify this
                 let pacc = <PropertyAccessExpression>expr
                 let tp = typeOf(pacc.expression)
                 let idx = fieldIndex(pacc)
@@ -1478,7 +1498,7 @@ namespace ts {
             }
 
             isLocal() {
-                return isLocalVar(this.def)
+                return isLocalVar(this.def) || isParameter(this.def)
             }
 
             refSuff() {
@@ -1494,7 +1514,7 @@ namespace ts {
                 if (this.isByRefLocal()) {
                     this.emitLoadLocal(proc);
                     proc.emit("pop {r1}");
-                    proc.emitCallRaw("bitvm::stloc" + (this.isRef() ? "Ref" : "")); // unref internal
+                    proc.emitCallRaw("bitvm::stloc" + this.refSuff()); // unref internal
                 } else {
                     this.emitStore(proc)
                 }
