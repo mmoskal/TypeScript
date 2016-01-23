@@ -26,8 +26,27 @@ namespace ts {
         return !(t.flags & (TypeFlags.Number | TypeFlags.Boolean | TypeFlags.Enum))
     }
 
+    function isRefDecl(def: Declaration) {
+        //let tp = checker.getDeclaredTypeOfSymbol(def.symbol)
+        let tp = typeOf(def)
+        return isRefType(tp)
+    }
+
+
+
+    function getEnclosingFunction(node0: Node) {
+        let node = node0
+        while (true) {
+            node = node.parent
+            if (!node)
+                userError(lf("cannot determine parent of {0}", stringKind(node0)))
+            if (node.kind == SyntaxKind.FunctionDeclaration) return <FunctionDeclaration>node
+            if (node.kind == SyntaxKind.SourceFile) return null
+        }
+    }
+
     function isGlobalVar(d: Declaration) {
-        return d.kind == SyntaxKind.VariableDeclaration && d.parent.parent.parent.kind == SyntaxKind.SourceFile;
+        return d.kind == SyntaxKind.VariableDeclaration && !getEnclosingFunction(d)
     }
 
     function isLocalVar(d: Declaration) {
@@ -65,12 +84,20 @@ namespace ts {
         return null;
     }
 
+    function deconstructFunctionType(t: Type) {
+        let sigs = checker.getSignaturesOfType(t, SignatureKind.Call)
+        if (sigs && sigs.length == 1)
+            return sigs[0]
+        return null
+    }
+
     function checkType(t: Type) {
         let ok = TypeFlags.String | TypeFlags.Number | TypeFlags.Boolean | TypeFlags.Void | TypeFlags.Enum | TypeFlags.Null
         if ((t.flags & ok) == 0) {
             if (isArrayType(t)) return t;
             if (isClassType(t)) return t;
-            userError(lf("unsupported type: {0}", checker.typeToString(t)))
+            if (deconstructFunctionType(t)) return t;
+            userError(lf("unsupported type: {0} 0x{1}", checker.typeToString(t), t.flags.toString(16)))
         }
         return t
     }
@@ -83,8 +110,19 @@ namespace ts {
         return checkType(r)
     }
 
-    export function emitMBit(program: Program): EmitResult {
+    type StringMap<T> = thumb.StringMap<T>;
+    type VarOrParam = VariableDeclaration | ParameterDeclaration;
 
+    interface VariableInfo {
+        captured?: boolean;
+        written?: boolean;
+    }
+
+    interface FunctionInfo {
+        capturedVars: VarOrParam[];
+    }
+
+    export function emitMBit(program: Program): EmitResult {
         const diagnostics = createDiagnosticCollection();
         checker = program.getTypeChecker();
         let classInfos: thumb.StringMap<ClassInfo> = {}
@@ -93,15 +131,29 @@ namespace ts {
         mbit.setup();
 
         const fs = require("fs");
-        const bin = new mbit.Binary();
+        let bin: mbit.Binary;
+        let proc: mbit.Procedure;
 
-        let proc: mbit.Procedure = new mbit.Procedure();
-        bin.addProc(proc);
+        function reset() {
+            bin = new mbit.Binary();
+            proc = new mbit.Procedure();
+            bin.addProc(proc);
+        }
 
-        let currentSourceFile: SourceFile = null;
+        let variableStatus: StringMap<VariableInfo> = {};
+        let functionInfo: StringMap<FunctionInfo> = {};
 
+        reset();
         program.getSourceFiles().forEach(emit);
-        finalEmit();
+
+        if (diagnostics.getModificationCount() == 0) {
+            console.log("second pass")
+            reset();
+            bin.finalPass = true
+            program.getSourceFiles().forEach(emit);
+
+            finalEmit();
+        }
 
         return {
             diagnostics: diagnostics.getDiagnostics(),
@@ -124,6 +176,33 @@ namespace ts {
             userError(lf("Unsupported syntax node: {0}", stringKind(n)) + addInfo);
         }
 
+        function getFunctionInfo(f: FunctionLikeDeclaration) {
+            let key = getNodeId(f) + ""
+            let info = functionInfo[key]
+            if (!info)
+                functionInfo[key] = info = {
+                    capturedVars: []
+                }
+            return info
+        }
+
+        function recordUse(v: VarOrParam, written = false) {
+            let key = getNodeId(v) + ""
+            let info = variableStatus[key]
+            if (!info)
+                variableStatus[key] = info = {}
+            if (written)
+                info.written = true;
+            let outer = getEnclosingFunction(v)
+            if (outer == null || outer == proc.action) {
+                // not captured
+            } else {
+                if (proc.info.capturedVars.indexOf(v) < 0)
+                    proc.info.capturedVars.push(v);
+                info.captured = true;
+            }
+        }
+
         function scope(f: () => void) {
             let prevProc = proc;
             try {
@@ -143,6 +222,7 @@ namespace ts {
             const hex = bin.patchHex(false).join("\r\n") + "\r\n"
             fs.writeFileSync("microbit.asm", bin.csource) // optimized
             fs.writeFileSync("microbit.hex", hex)
+            console.log("wrote microbit.hex and microbit.asm")
         }
 
         function lookupLocation(decl: Declaration): mbit.Location {
@@ -155,8 +235,12 @@ namespace ts {
                 return ex
             } else {
                 let res = proc.localIndex(decl)
-                if (!res)
-                    userError(lf("cannot locate identifer"))
+                if (!res) {
+                    if (bin.finalPass)
+                        userError(lf("cannot locate identifer"))
+                    else
+                        res = proc.mkLocal(decl)
+                }
                 return res
             }
         }
@@ -189,6 +273,7 @@ namespace ts {
             let decl = getDecl(node)
             if (decl && (decl.kind == SyntaxKind.VariableDeclaration || decl.kind == SyntaxKind.Parameter)) {
                 let l = lookupLocation(decl)
+                recordUse(<VarOrParam>decl)
                 l.emitLoad(proc);
             } else {
                 unhandled(node, "id")
@@ -436,7 +521,7 @@ namespace ts {
         }
 
         function getFunctionLabel(node: FunctionLikeDeclaration) {
-            let text = node ? (<Identifier>node.name).text : null
+            let text = node && node.name ? (<Identifier>node.name).text : null
             text = text || "inline"
             return "_" + text.replace(/[^\w]+/g, "_") + "_" + getNodeId(node)
         }
@@ -467,16 +552,57 @@ namespace ts {
             if (node.flags & NodeFlags.Ambient)
                 return;
 
+            let info = getFunctionInfo(node)
+
+            let refs = info.capturedVars.filter(v => isRefDecl(v))
+            let prim = info.capturedVars.filter(v => !isRefDecl(v))
+            let caps = refs.concat(prim)
+            let locals = caps.map((v, i) => {
+                let l = new mbit.Location(i, v)
+                l.iscap = true
+                return l;
+            })
+
+            let isLambda = getEnclosingFunction(node) != null;
+
+            if (isLambda) {
+                proc.emitInt(refs.length)
+                proc.emitInt(caps.length)
+                proc.emitLdPtr(getFunctionLabel(node), true)
+                proc.emitCall("action::mk", 0)
+                caps.forEach((l, i) => {
+                    proc.emitInt(i)
+                    proc.localIndex(l).emitLoad(proc, true) // direct load
+                    proc.emitCall("bitvm::stclo", 0)
+                    // already done by emitCall
+                    // proc.emit("push {r0}");
+                })
+            } else {
+                Debug.assert(caps.length == 0);
+            }
+
             scope(() => {
                 proc = new mbit.Procedure();
                 proc.action = node;
+                proc.info = info;
+                proc.captured = locals;
                 bin.addProc(proc);
 
                 proc.emit(".section code");
+                proc.emit(".balign 4");
                 proc.emitLbl(getFunctionLabel(node));
-                proc.emit("@stackmark func");
-                proc.emit("@stackmark args");
-                proc.emit("push {lr}");
+
+                if (isLambda) {
+                    proc.emit(".short 0xffff, 0x0000   ; action literal");
+                    proc.emit("@stackmark inlfunc");
+                    proc.emit("push {r5, lr}");
+                    proc.emit("mov r5, r1");
+                } else {
+                    proc.emit("@stackmark func");
+                    proc.emit("@stackmark args");
+                    proc.emit("push {lr}");
+                }
+
                 proc.pushLocals();
 
                 proc.args = node.parameters.map((p, i) => {
@@ -499,8 +625,14 @@ namespace ts {
                 }
 
                 proc.popLocals();
-                proc.emit("pop {pc}");
-                proc.emit("@stackempty func");
+
+                if (isLambda) {
+                    proc.emit("pop {r5, pc}");
+                    proc.emit("@stackempty inlfunc");
+                } else {
+                    proc.emit("pop {pc}");
+                    proc.emit("@stackempty func");
+                }
             })
         }
 
@@ -622,7 +754,7 @@ namespace ts {
                 proc.emit("pop {r1}")
                 proc.emit("push {r0}")
                 proc.emitInt(idx)
-                proc.emit("push {r1}")                
+                proc.emit("push {r1}")
                 proc.emitCall("bitvm::stfld" + refSuff(expr), 0); // it does the decr itself, no mask
             } else {
                 unhandled(expr, "assignment target")
@@ -913,7 +1045,6 @@ namespace ts {
         function emitExportDeclaration(node: ExportDeclaration) { }
         function emitExportAssignment(node: ExportAssignment) { }
         function emitSourceFileNode(node: SourceFile) {
-            currentSourceFile = node;
             node.statements.forEach(emit)
         }
 
@@ -925,6 +1056,8 @@ namespace ts {
             try {
                 emitNodeCore(node);
             } catch (e) {
+                if (!e.bitvmUserError)
+                    console.log(e.stack)
                 error(node, e.message)
             }
         }
@@ -1008,6 +1141,9 @@ namespace ts {
                     return emitPropertyAssignment(<PropertyDeclaration>node);
                 case SyntaxKind.NewExpression:
                     return emitNewExpression(<NewExpression>node);
+                case SyntaxKind.TypeAliasDeclaration:
+                    // skip
+                    return
                 default:
                     unhandled(node);
 
@@ -1255,15 +1391,10 @@ namespace ts {
             return null
         }
 
-        function isRefDecl(def: Declaration) {
-            //let tp = checker.getDeclaredTypeOfSymbol(def.symbol)
-            let tp = typeOf(def)
-            return isRefType(tp)
-        }
-
 
         export class Location {
             isarg = false;
+            iscap = false;
 
             constructor(public index: number, public def: Declaration = null) {
             }
@@ -1313,7 +1444,10 @@ namespace ts {
             }
 
             asmref(proc: Procedure) {
-                if (this.isarg) {
+                if (this.iscap) {
+                    Debug.assert(0 <= this.index && this.index < 32)
+                    return "[r5, #4*" + this.index + "]"
+                } else if (this.isarg) {
                     var idx = proc.args.length - this.index - 1
                     return "[sp, args@" + idx + "] ; " + this.toString()
                 } else {
@@ -1327,8 +1461,8 @@ namespace ts {
             }
 
             emitStore(proc: Procedure) {
-                if (this.isarg)
-                    Debug.fail("store for arg")
+                if (this.iscap)
+                    Debug.fail("store for captured")
 
                 if (this.isGlobal()) {
                     proc.emitInt(this.index)
@@ -1357,12 +1491,7 @@ namespace ts {
             }
 
             emitLoadLocal(proc: Procedure) {
-                if (this.isarg && proc.argsInR5) {
-                    Debug.assert(0 <= this.index && this.index < 32)
-                    proc.emit("ldr r0, [r5, #4*" + this.index + "]")
-                } else {
-                    this.emitLoadCore(proc)
-                }
+                this.emitLoadCore(proc)
             }
 
             emitLoad(proc: Procedure, direct = false) {
@@ -1381,7 +1510,7 @@ namespace ts {
 
             emitClrIfRef(proc: Procedure) {
                 // Debug.assert(!this.isarg)
-                Debug.assert(!this.isGlobal())
+                Debug.assert(!this.isGlobal() && !this.iscap)
                 if (this.isRef() || this.isByRefLocal()) {
                     this.emitLoadCore(proc);
                     proc.emitCallRaw("bitvm::decr");
@@ -1392,13 +1521,14 @@ namespace ts {
         export class Procedure {
             numArgs = 0;
             action: FunctionLikeDeclaration;
-            argsInR5 = false;
+            info: FunctionInfo;
             seqNo: number;
             lblNo = 0;
 
             prebody = "";
             body = "";
             locals: Location[] = [];
+            captured: Location[] = [];
             args: Location[] = [];
 
             hasReturn() {
@@ -1424,7 +1554,8 @@ namespace ts {
             }
 
             localIndex(l: Declaration, noargs = false): Location {
-                return this.locals.filter(n => n.def == l)[0] ||
+                return this.captured.filter(n => n.def == l)[0] ||
+                    this.locals.filter(n => n.def == l)[0] ||
                     (noargs ? null : this.args.filter(n => n.def == l)[0])
             }
 
@@ -1626,6 +1757,7 @@ namespace ts {
             globals: Location[] = [];
             buf: number[];
             csource = "";
+            finalPass = false;
 
             strings: StringMap<string> = {};
             stringsBody = "";

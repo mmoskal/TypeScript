@@ -47,9 +47,7 @@ namespace basic {
     export function buttonIsPressed(button: Button): boolean { return false; }
 }
 
-interface Action {
-    (): void;
-}
+type Action = () => void;
 
 namespace control {
     /**
@@ -57,7 +55,7 @@ namespace control {
      * {help:functions/in-background}
      * {shim:micro_bit::runInBackground}
      */
-    //export function inBackground(body: Action): void { }
+    export function inBackground(body: Action): void { }
 }
 
 enum Button {

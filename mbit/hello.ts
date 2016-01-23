@@ -26,6 +26,7 @@ export function main() : void
     showDigit(4);    
     testReccoll();
     showDigit(5);
+    inBg();
     /*
     testAction(1);
     showDigit(6);
@@ -269,6 +270,20 @@ function testReccoll() : void
     coll.push(item);
 }
 
+function inBg()
+{    
+    let k = 7
+    let q = 14
+    let rec = new Testrec();    
+    glb1 = 0
+    control.inBackground(() => {
+        glb1 = glb1 + 10 + (q - k)
+        rec.str = "foo"
+    })
+    basic.pause(50)
+    assert(glb1 == 17, "inbg0")
+    assert(rec.str == "foo", "inbg1")
+}
 
 /*
 
