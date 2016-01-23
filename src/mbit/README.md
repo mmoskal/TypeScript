@@ -2,10 +2,10 @@
 
 ## TODO
 
+* image literals
+* code in top-level scope
 * class methods
 * optional arguments
 * default arguments
-* code in top-level scope
-* image literals
 * +=, -= etc
 * return values in lambdas
